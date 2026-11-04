@@ -1,0 +1,41 @@
+schema: spec-driven
+
+context: |
+  Hot Edit Web: a Chrome MV3 extension that lets product owners select an area of
+  any web page, describe a UI change in natural language, and see the DOM change
+  live. Users bring their own LLM API key. Local-first: no backend; state lives in
+  chrome.storage / IndexedDB.
+
+  Architecture is Domain-Driven Design with strict layering, and every change must respect it:
+  - Layers per bounded context: domain <- application <- infrastructure <- presentation/composition.
+  - domain: entities, aggregates, value objects, domain events, domain errors and
+    port interfaces (repositories, gateways). Pure TypeScript: no DOM, chrome, fetch, React or Zod imports.
+  - application: use cases orchestrating domain objects through ports. Imports domain only.
+  - infrastructure: adapters implementing ports (DOM, Anthropic API, chrome.storage, messaging).
+  - presentation/composition (extension package only): React UI, WXT entrypoints and the
+    composition root that wires adapters into use cases.
+  - Bounded contexts (Editing, AI Assistance; later Design System, Handoff) never import each
+    other's internals, only another context's application public API (index.ts).
+  - Boundaries are enforced by ESLint (eslint-plugin-boundaries); a violation fails `pnpm lint`.
+
+  The LLM never produces executable JavaScript. It returns structured patch operations
+  (insert, replace, setStyle, setAttr, setText, remove, addCss) that the engine validates,
+  sanitizes (DOMPurify), applies and can invert.
+
+  Ubiquitous language: EditSession, Changeset, PatchOp, ElementAnchor, Selection, Prompt,
+  PatchProposal, PatchGenerator, ProviderConfig, EditContext, PageGateway.
+
+  Stack: pnpm workspaces, TypeScript strict, WXT + React, Zod (infrastructure/application
+  boundary only), DOMPurify, Vitest + jsdom, Playwright.
+  Default model claude-opus-5-5, optional claude-sonnet-5-5.
+
+rules:
+  proposal:
+    - State which bounded contexts and layers the change touches
+    - Always state what is out of scope
+  design:
+    - Map every new type to its bounded context and layer
+    - Name the ports introduced and which adapters implement them
+  tasks:
+    - Order tasks inside-out (domain, application, infrastructure, presentation)
+    - Every domain and application task includes its unit tests

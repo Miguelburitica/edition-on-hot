@@ -1,0 +1,28 @@
+{
+  "name": "hot-edit-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.1.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "spec:validate": "openspec validate --all --strict",
+    "dev": "pnpm --filter @hew/extension dev",
+    "build": "pnpm --filter @hew/extension build",
+    "fixture": "pnpm --filter @hew/demo-app dev",
+    "e2e": "pnpm --filter @hew/extension e2e"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@fission-ai/openspec": "1.16.0",
+    "eslint": "10.14.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-boundaries": "7.4.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1"
+  }
+}

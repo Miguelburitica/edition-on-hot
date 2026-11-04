@@ -1,0 +1,33 @@
+import type { Result } from '../../shared/domain';
+import type { EditSession, EditSessionId } from './edit-session';
+import type { AnchorNotFoundError, PatchApplyError, PatchSourceError } from './errors';
+import type { PatchOp } from './patch-op';
+import type { Prompt } from './prompt';
+import type { Selection } from './selection';
+
+/** An op as applied to the page. `revertToken` is opaque to the domain; only the gateway reads it. */
+export interface AppliedOp {
+  readonly op: PatchOp;
+  readonly revertToken: unknown;
+}
+
+/** Port to the live page. Implementations must restore the exact prior state on revert. */
+export interface PageGateway {
+  apply(op: PatchOp, changesetId: string): Result<AppliedOp, AnchorNotFoundError | PatchApplyError>;
+  revert(applied: AppliedOp): void;
+}
+
+export interface EditSessionRepository {
+  get(id: EditSessionId): Promise<EditSession | null>;
+  save(session: EditSession): Promise<void>;
+}
+
+export interface PatchSourceProposal {
+  readonly summary: string;
+  readonly ops: readonly PatchOp[];
+}
+
+/** Port that turns a prompt about a selection into patch ops (implemented via the AI context). */
+export interface PatchSource {
+  propose(selection: Selection, prompt: Prompt): Promise<Result<PatchSourceProposal, PatchSourceError>>;
+}
