@@ -1,2 +1,12 @@
 export * from './use-cases';
-export type { EditContextProps, ProposedOp, ModelId } from '../domain';
+export type {
+  AnthropicModelId,
+  ContextBudget,
+  ContextProfile,
+  EditContextProps,
+  ModelCapabilities,
+  OutputMode,
+  ProposedOp,
+  ProviderId,
+  RepairKind,
+} from '../domain';

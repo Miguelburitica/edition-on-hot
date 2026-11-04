@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Acme Cloud — demo app</title>
+    <!-- styles.css from fixtures/demo-app is inlined here at load time -->
+  </head>
+  <body>
+    <div id="root">
+      <div class="banner">Scheduled maintenance on Sunday, 02:00 UTC.</div>
+      <header class="top">
+        <strong>Acme Cloud</strong>
+        <nav class="actions" style="margin-top: 0px">
+          <button class="btn btn-ghost">Docs</button>
+          <button class="btn btn-primary">Upgrade</button>
+        </nav>
+      </header>
+      <main>
+        <section class="card">
+          <h2>Create your account</h2>
+          <form id="signup">
+            <label for="email">Work email</label>
+            <input id="email" name="email" type="email" placeholder="you@company.com" />
+            <label for="team">Team name</label>
+            <input id="team" name="team" placeholder="Acme" />
+            <div class="actions">
+              <button class="btn btn-primary" type="submit">Sign up</button>
+              <button class="btn btn-ghost" type="button">Talk to sales</button>
+            </div>
+          </form>
+        </section>
+        <section class="card">
+          <h2>Projects</h2>
+          <ul class="list">
+            <li><span>Billing service</span><span class="tag">Healthy</span></li>
+            <li><span>Search indexer</span><span class="tag">Degraded</span></li>
+            <li><span>Marketing site</span><span class="tag">Healthy</span></li>
+          </ul>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -21,4 +21,13 @@ describe('buildSelectionContext', () => {
     expect(new DomAnchorResolver(document).resolve(ctx.targets.get('t4')!)).toBe(document.querySelector('button'));
     expect(document.querySelector('[data-hew-target]')).toBeNull();
   });
+
+  it('limits labeled targets to the budget, always starting with the selection', () => {
+    document.body.innerHTML = '<ul id="l"><li>a</li><li>b</li><li>c</li><li>d</li></ul>';
+    const ctx = buildSelectionContext(document.querySelector('#l')!, { maxTargets: 3 });
+    expect([...ctx.targets.keys()]).toEqual(['t0', 't1', 't2']);
+    expect(ctx.html.match(/data-hew-target/g)).toHaveLength(3);
+    expect(ctx.html.startsWith('<ul id="l" data-hew-target="t0"')).toBe(true);
+    expect(buildSelectionContext(document.querySelector('#l')!, { maxTargets: 0 }).targets.size).toBe(1);
+  });
 });

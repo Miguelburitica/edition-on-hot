@@ -2,8 +2,29 @@ import { DomainError } from '../../shared/domain';
 
 export class MissingApiKeyError extends DomainError {
   readonly code = 'missing-api-key';
+  constructor(providerLabel: string) {
+    super(`Add your ${providerLabel} API key in settings before requesting changes.`);
+  }
+}
+
+export class InvalidModelIdError extends DomainError {
+  readonly code = 'invalid-model';
+  constructor(model: string) {
+    super(`"${model}" is not an OpenRouter model ID. Use the vendor/model format, e.g. z-ai/glm-5.3-flash.`);
+  }
+}
+
+export class UnknownProviderError extends DomainError {
+  readonly code = 'unknown-provider';
+  constructor(provider: string) {
+    super(`Provider "${provider}" is not supported.`);
+  }
+}
+
+export class CatalogUnavailableError extends DomainError {
+  readonly code = 'catalog-unavailable';
   constructor() {
-    super('Add your Anthropic API key in settings before requesting changes.');
+    super('The OpenRouter model catalog could not be reached.');
   }
 }
 
@@ -29,10 +50,24 @@ export class InvalidProposalError extends DomainError {
   }
 }
 
-export type ProviderFailureKind = 'auth' | 'rate-limit' | 'network' | 'timeout' | 'refusal' | 'unknown';
+export type ProviderFailureKind =
+  | 'auth'
+  | 'credits'
+  | 'moderation'
+  | 'unavailable'
+  | 'no-provider'
+  | 'rate-limit'
+  | 'network'
+  | 'timeout'
+  | 'refusal'
+  | 'unknown';
 
 const PROVIDER_MESSAGES: Record<ProviderFailureKind, string> = {
   auth: 'Your API key was rejected. Check it in settings.',
+  credits: 'Your OpenRouter account is out of credits. Add credits to your OpenRouter account and try again.',
+  moderation: "The request was blocked by the provider's content policy.",
+  unavailable: 'The model is currently down. Try again in a moment or pick another model in settings.',
+  'no-provider': 'No provider can serve this model with the required features. Pick another model in settings.',
   'rate-limit': 'The provider is rate limiting requests. Wait a moment and try again.',
   network: 'Could not reach the provider. Check your connection.',
   timeout: 'The provider took too long to answer. Try again or simplify the request.',

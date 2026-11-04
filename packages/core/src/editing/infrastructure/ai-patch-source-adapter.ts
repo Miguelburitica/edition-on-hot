@@ -1,4 +1,4 @@
-import type { AiError, GeneratePatchRequest, GeneratePatchResponse, ProposedOp } from '../../ai/application';
+import type { AiError, ContextBudget, GeneratePatchRequest, GeneratePatchResponse, ProposedOp } from '../../ai/application';
 import { err, ok, type Result } from '../../shared/domain';
 import {
   PatchSourceError,
@@ -15,6 +15,9 @@ import { buildSelectionContext } from './selection-context';
 /** Calls the AI context's GeneratePatch, wherever it runs (directly or over the message bridge). */
 export type PatchRequester = (request: GeneratePatchRequest) => Promise<Result<GeneratePatchResponse, AiError>>;
 
+/** Asks the AI context how much of the selection the active model should see. */
+export type BudgetRequester = () => Promise<Result<ContextBudget, AiError>>;
+
 /**
  * Anti-corruption layer between Editing and AI Assistance: serializes the selection into the AI
  * context's request and maps target ids in its answer back to Editing anchors.
@@ -23,6 +26,7 @@ export class AiPatchSourceAdapter implements PatchSource {
   constructor(
     private readonly resolver: DomAnchorResolver,
     private readonly requestPatch: PatchRequester,
+    private readonly requestBudget: BudgetRequester,
   ) {}
 
   async propose(selection: Selection, prompt: Prompt): Promise<Result<PatchSourceProposal, PatchSourceError>> {
@@ -30,7 +34,9 @@ export class AiPatchSourceAdapter implements PatchSource {
     if (!el) {
       return err(new PatchSourceError('anchor-not-found', 'The selected element is no longer on the page. Select it again.'));
     }
-    const ctx = buildSelectionContext(el);
+    const budget = await this.requestBudget();
+    if (!budget.ok) return err(new PatchSourceError(budget.error.code, budget.error.message));
+    const ctx = buildSelectionContext(el, { maxTargets: budget.value.maxTargets });
     const response = await this.requestPatch({
       prompt: prompt.text,
       context: {

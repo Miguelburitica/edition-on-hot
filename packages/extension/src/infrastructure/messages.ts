@@ -1,5 +1,5 @@
 import type { SessionSnapshot, UseCaseError } from '@hew/core/editing/application';
-import type { AiError, GeneratePatchResponse } from '@hew/core/ai/application';
+import type { AiError, ContextBudget, GeneratePatchResponse } from '@hew/core/ai/application';
 import type { Result } from '@hew/core/shared/domain';
 import { z } from 'zod';
 
@@ -44,3 +44,7 @@ export const generatePatchMessage = z.object({
 });
 export type GeneratePatchMessage = z.infer<typeof generatePatchMessage>;
 export type GeneratePatchReply = Result<GeneratePatchResponse, AiError>;
+
+export const getContextBudgetMessage = z.object({ type: z.literal('ai/getContextBudget') });
+export type GetContextBudgetMessage = z.infer<typeof getContextBudgetMessage>;
+export type GetContextBudgetReply = Result<ContextBudget, AiError>;

@@ -11,7 +11,13 @@ export interface SidePanelServices {
   openSettings(): void;
 }
 
-const SETTINGS_ERRORS = new Set(['missing-api-key', 'provider-auth', 'invalid-api-key']);
+const SETTINGS_ERRORS = new Set([
+  'missing-api-key',
+  'provider-auth',
+  'invalid-api-key',
+  'provider-no-provider',
+  'provider-unavailable',
+]);
 
 interface ErrorView {
   code: string;

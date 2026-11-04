@@ -1,10 +1,10 @@
 import { ok } from '@hew/core/shared/domain';
 import { ProviderSettings } from '@hew/core/ai/domain';
 import { describe, expect, it, vi } from 'vitest';
-import { ChromeSettingsRepository, type StorageAreaLike } from './chrome-settings-repository';
+import { ChromeSettingsRepository, SETTINGS_KEY, type StorageAreaLike } from './chrome-settings-repository';
 import { EditorClient } from './editor-client';
 import { editorCommand } from './messages';
-import { bridgedPatchRequester, createHandler } from './runtime-bridge';
+import { bridgedBudgetRequester, bridgedPatchRequester, createHandler } from './runtime-bridge';
 
 class FakeStorage implements StorageAreaLike {
   data: Record<string, unknown> = {};
@@ -17,20 +17,50 @@ class FakeStorage implements StorageAreaLike {
 }
 
 describe('ChromeSettingsRepository', () => {
-  it('round-trips settings and falls back to defaults on bad data', async () => {
+  it('round-trips v2 settings with both providers', async () => {
     const storage = new FakeStorage();
     const repo = new ChromeSettingsRepository(storage);
-    expect((await repo.load()).hasKey).toBe(false);
+    expect((await repo.load()).hasKey()).toBe(false);
 
-    const settings = ProviderSettings.create({ apiKey: 'sk-ant-abc-1234', model: 'claude-sonnet-5-5' });
-    if (!settings.ok) throw settings.error;
-    await repo.save(settings.value);
+    const a = ProviderSettings.empty().update('anthropic', { apiKey: 'sk-ant-abc-1234', model: 'claude-sonnet-5-5' });
+    if (!a.ok) throw a.error;
+    const both = a.value.update('openrouter', {
+      apiKey: 'sk-or-xyz-5678',
+      model: 'anthropic/claude-haiku-5.5',
+      profile: 'standard',
+      capabilities: { status: 'found', structuredOutputs: true, tools: true },
+    });
+    if (!both.ok) throw both.error;
+    await repo.save(both.value.activate('openrouter'));
+
+    expect(storage.data[SETTINGS_KEY]).toMatchObject({ version: 2, active: 'openrouter' });
     const loaded = await repo.load();
-    expect(loaded.apiKey).toBe('sk-ant-abc-1234');
-    expect(loaded.model).toBe('claude-sonnet-5-5');
+    expect(loaded.active).toBe('openrouter');
+    expect(loaded.anthropic).toMatchObject({ apiKey: 'sk-ant-abc-1234', model: 'claude-sonnet-5-5' });
+    expect(loaded.openrouter).toMatchObject({
+      apiKey: 'sk-or-xyz-5678',
+      model: 'anthropic/claude-haiku-5.5',
+      profile: 'standard',
+      capabilities: { status: 'found', structuredOutputs: true },
+    });
+  });
 
-    storage.data['hew.providerSettings'] = { apiKey: 'x', model: 'not-a-model' };
-    expect((await repo.load()).model).toBe('claude-opus-5-5');
+  it('upgrades phase 1 settings to an active Anthropic slot', async () => {
+    const storage = new FakeStorage();
+    storage.data[SETTINGS_KEY] = { apiKey: 'sk-ant-old-0001', model: 'claude-sonnet-5-5' };
+    const loaded = await new ChromeSettingsRepository(storage).load();
+    expect(loaded.active).toBe('anthropic');
+    expect(loaded.anthropic).toMatchObject({ apiKey: 'sk-ant-old-0001', model: 'claude-sonnet-5-5' });
+    expect(loaded.hasKey('openrouter')).toBe(false);
+  });
+
+  it('falls back to defaults on invalid data', async () => {
+    const storage = new FakeStorage();
+    const repo = new ChromeSettingsRepository(storage);
+    storage.data[SETTINGS_KEY] = { apiKey: 'x', model: 'not-a-model' };
+    expect((await repo.load()).anthropic.model).toBe('claude-opus-5-5');
+    storage.data[SETTINGS_KEY] = { version: 2, active: 'openrouter', anthropic: { model: 'claude-opus-5-5' }, openrouter: { model: 'no slash' } };
+    expect((await repo.load()).active).toBe('anthropic');
   });
 });
 
@@ -65,7 +95,7 @@ describe('bridgedPatchRequester', () => {
   };
 
   it('forwards the request to the background and returns its reply', async () => {
-    const reply = ok({ summary: 's', ops: [], contextTruncated: false });
+    const reply = ok({ summary: 's', ops: [], contextTruncated: false, diagnostics: { provider: 'anthropic' as const, model: 'm', mode: 'tool' as const, attempts: 1, repairs: [], latencyMs: 1 } });
     const send = vi.fn(async () => reply);
     expect(await bridgedPatchRequester(send)(request)).toBe(reply);
     expect(send).toHaveBeenCalledWith({ type: 'ai/generatePatch', request });
@@ -76,6 +106,16 @@ describe('bridgedPatchRequester', () => {
       throw new Error('Receiving end does not exist.');
     })(request);
     expect(!result.ok && result.error.code).toBe('extension-error');
+  });
+});
+
+describe('bridgedBudgetRequester', () => {
+  it('asks the background for the budget and reports a missing background', async () => {
+    const send = vi.fn(async () => ok({ maxHtmlChars: 6000, maxTargets: 20 }));
+    expect(await bridgedBudgetRequester(send)()).toEqual(ok({ maxHtmlChars: 6000, maxTargets: 20 }));
+    expect(send).toHaveBeenCalledWith({ type: 'ai/getContextBudget' });
+    const gone = await bridgedBudgetRequester(async () => undefined)();
+    expect(!gone.ok && gone.error.code).toBe('extension-error');
   });
 });
 

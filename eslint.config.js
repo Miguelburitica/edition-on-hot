@@ -31,6 +31,17 @@ const allow = {
     'ext-composition',
   ],
   'ext-entrypoint': ['ext-composition', 'ext-presentation'],
+  // The eval harness is a composition root running in Node: it may wire every core layer.
+  eval: [
+    'shared-domain',
+    'editing-domain',
+    'editing-application',
+    'editing-infrastructure',
+    'ai-domain',
+    'ai-application',
+    'ai-infrastructure',
+    'eval',
+  ],
 };
 
 const elements = [
@@ -46,6 +57,7 @@ const elements = [
   { type: 'ext-presentation', pattern: `${ext}/presentation/**`, partialMatch: false },
   { type: 'ext-composition', pattern: `${ext}/composition/**`, partialMatch: false },
   { type: 'ext-entrypoint', pattern: `${ext}/entrypoints/**`, partialMatch: false },
+  { type: 'eval', pattern: '**/packages/eval/src/**', partialMatch: false },
 ];
 
 const pureLayers = ['packages/core/src/**/domain/**/*.ts', 'packages/core/src/**/application/**/*.ts'];

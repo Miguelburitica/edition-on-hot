@@ -10,7 +10,7 @@ export default defineConfig({
     name: 'Hot Edit Web',
     description: 'Select part of any page, describe a change, and preview it live.',
     permissions: ['storage', 'sidePanel'],
-    host_permissions: ['https://api.anthropic.com/*'],
+    host_permissions: ['https://api.anthropic.com/*', 'https://openrouter.ai/*'],
     action: { default_title: 'Open Hot Edit Web' },
   },
 });

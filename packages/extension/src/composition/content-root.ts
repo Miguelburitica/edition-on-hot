@@ -13,6 +13,7 @@ import {
 import { err, ok, type Result } from '@hew/core/shared/domain';
 import { browser } from 'wxt/browser';
 import {
+  bridgedBudgetRequester,
   bridgedPatchRequester,
   createHandler,
   editorCommand,
@@ -36,6 +37,7 @@ export function startContent(): void {
     patchSource: new AiPatchSourceAdapter(
       resolver,
       bridgedPatchRequester((message) => browser.runtime.sendMessage(message)),
+      bridgedBudgetRequester((message) => browser.runtime.sendMessage(message)),
     ),
     ids: { next: () => `cs-${Date.now().toString(36)}-${++counter}` },
     clock: { now: () => new Date() },

@@ -36,9 +36,21 @@ async function saveKey(context: BrowserContext, extensionId: string) {
   await options.goto(`chrome-extension://${extensionId}/options.html`);
   await options.getByLabel('Anthropic API key').fill(FAKE_KEY);
   await options.getByRole('button', { name: 'Save' }).click();
-  await expect(options.getByRole('status')).toHaveText('Settings saved.');
+  await expect(options.getByRole('status')).toHaveText('Settings saved. Anthropic is the active provider.');
   await expect(options.getByText('Saved key: sk-ant-…0000')).toBeVisible();
   await options.close();
+}
+
+const FAKE_OPENROUTER_KEY = 'sk-or-e2e-placeholder-9999';
+
+async function saveOpenRouter(context: BrowserContext, extensionId: string, model = 'z-ai/glm-5.3-flash'): Promise<Page> {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  await options.getByRole('button', { name: /^OpenRouter/ }).click();
+  await options.getByLabel('OpenRouter API key').fill(FAKE_OPENROUTER_KEY);
+  await options.getByLabel('OpenRouter model').fill(model);
+  await options.getByRole('button', { name: /^Save/ }).click();
+  return options;
 }
 
 /** Opens the fixture and a side panel page pinned to its tab. */
@@ -125,4 +137,46 @@ test('the page cannot read the API key', async ({ context, extensionId }) => {
     return haystack.some((s) => s.includes(key));
   }, FAKE_KEY);
   expect(leaked).toBe(false);
+});
+
+test('OpenRouter: keys are kept per provider and the edit loop runs with it active', async ({ context, extensionId }) => {
+  await saveKey(context, extensionId);
+  const options = await saveOpenRouter(context, extensionId);
+  await expect(options.getByRole('status')).toHaveText('Settings saved. OpenRouter is the active provider.');
+  await expect(options.getByTestId('model-status')).toHaveText(/Found in the OpenRouter catalog · supports structured outputs and tools/);
+  await expect(options.getByLabel('Context size')).toHaveValue('compact');
+
+  // Both keys survive a reload, and OpenRouter stays active.
+  await options.reload();
+  await expect(options.getByRole('button', { name: 'OpenRouter (active)' })).toBeVisible();
+  await expect(options.getByText('Saved key: sk-or-e…9999')).toBeVisible();
+  await options.getByRole('button', { name: /^Anthropic/ }).click();
+  await expect(options.getByText('Saved key: sk-ant-…0000')).toBeVisible();
+  await options.close();
+
+  const { app, panel } = await openEditor(context, extensionId);
+  await selectSignupCard(app, panel);
+  await panel.getByRole('textbox').fill('Add a red notification banner above this form');
+  await panel.getByRole('button', { name: 'Apply' }).click();
+  await expect(app.locator('.hew-e2e-banner')).toHaveCount(1);
+});
+
+test('OpenRouter: model ids are validated and checked against the catalog', async ({ context, extensionId }) => {
+  const options = await saveOpenRouter(context, extensionId, 'glm-flash');
+  await expect(options.getByRole('status')).toContainText('Use the vendor/model format');
+
+  await options.getByLabel('OpenRouter model').fill('acme/unknown-model');
+  await expect(options.getByTestId('model-status')).toHaveText('Not found in the OpenRouter catalog. You can still save it.');
+  await options.getByRole('button', { name: /^Save/ }).click();
+  await expect(options.getByRole('status')).toHaveText('Settings saved. OpenRouter is the active provider.');
+});
+
+test('provider errors are explained in the side panel', async ({ context, extensionId }) => {
+  await (await saveOpenRouter(context, extensionId)).close();
+  const { app, panel } = await openEditor(context, extensionId);
+  await selectSignupCard(app, panel);
+  await panel.getByRole('textbox').fill('simulate no-provider');
+  await panel.getByRole('button', { name: 'Apply' }).click();
+  await expect(panel.getByRole('alert')).toContainText('No provider can serve this model with the required features');
+  await expect(panel.getByRole('button', { name: 'Open settings' })).toBeVisible();
 });

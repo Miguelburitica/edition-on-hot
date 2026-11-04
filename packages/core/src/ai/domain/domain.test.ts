@@ -1,21 +1,35 @@
 import { describe, expect, it } from 'vitest';
+import { CONTEXT_BUDGETS } from './context-budget';
 import { EditContext } from './edit-context';
+import { isOpenRouterModelId } from './model';
+import { chooseOutputMode } from './output-mode';
 import { PatchProposal } from './patch-proposal';
-import { ProviderSettings } from './provider-settings';
+import { ProviderSettings, type ProviderConfig } from './provider-settings';
 
 const baseContext = { ancestors: [], styles: {}, targetIds: ['t0', 't1'], pageUrl: 'http://x', pageTitle: 'X' };
 
+function settings(build: (s: ProviderSettings) => ReturnType<ProviderSettings['update']>) {
+  const result = build(ProviderSettings.empty());
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function withKeys(): ProviderSettings {
+  const anthropic = settings((e) => e.update('anthropic', { apiKey: 'sk-ant-aaaa-1111' }));
+  return settings(() => anthropic.update('openrouter', { apiKey: 'sk-or-bbbb-2222' }));
+}
+
 describe('EditContext', () => {
-  it('truncates large HTML and marks it truncated', () => {
-    const ctx = EditContext.create({ ...baseContext, html: `<div>${'a'.repeat(50)}</div>` }, 20);
+  it('truncates large HTML to the budget and marks it truncated', () => {
+    const ctx = EditContext.create({ ...baseContext, html: `<div>${'a'.repeat(50)}</div>` }, { maxHtmlChars: 20, maxTargets: 40 });
     expect(ctx.props.html).toHaveLength(20);
     expect(ctx.truncated).toBe(true);
   });
 
-  it('keeps small HTML intact', () => {
-    const ctx = EditContext.create({ ...baseContext, html: '<p>hi</p>' });
+  it('keeps small HTML intact and caps target ids', () => {
+    const ctx = EditContext.create({ ...baseContext, html: '<p>hi</p>', targetIds: ['t0', 't1', 't2'] }, { maxHtmlChars: 100, maxTargets: 2 });
     expect(ctx.truncated).toBe(false);
-    expect(ctx.props.html).toBe('<p>hi</p>');
+    expect(ctx.props.targetIds).toEqual(['t0', 't1']);
   });
 
   it('removes input value attributes', () => {
@@ -39,21 +53,91 @@ describe('PatchProposal', () => {
   });
 });
 
+describe('OpenRouter model ids', () => {
+  it.each(['z-ai/glm-5.3-flash', 'anthropic/claude-haiku-5.5', '~z-ai/glm-flash-latest', 'z-ai/glm-5.3-flash:batch'])('accepts %s', (id) => {
+    expect(isOpenRouterModelId(id)).toBe(true);
+  });
+
+  it.each(['glm-5.3-flash', 'z-ai/', '/model', 'a b/c', ''])('rejects %j', (id) => {
+    expect(isOpenRouterModelId(id)).toBe(false);
+  });
+});
+
 describe('ProviderSettings', () => {
-  it('defaults to Opus 5.5 with no key', () => {
-    const settings = ProviderSettings.empty();
-    expect(settings.model).toBe('claude-opus-5-5');
-    expect(settings.toConfig().ok).toBe(false);
+  it('defaults to Anthropic Opus 5.5 and OpenRouter GLM 5.3 Flash, with no keys', () => {
+    const s = ProviderSettings.empty();
+    expect(s.active).toBe('anthropic');
+    expect(s.anthropic.model).toBe('claude-opus-5-5');
+    expect(s.openrouter.model).toBe('z-ai/glm-5.3-flash');
+    expect(s.toConfig().ok).toBe(false);
   });
 
-  it('masks the key', () => {
-    const result = ProviderSettings.create({ apiKey: ' sk-ant-api03-abcdefghijk1234 ', model: 'claude-sonnet-5-5' });
-    expect(result.ok && result.value.maskedKey).toBe('sk-ant-…1234');
-    expect(result.ok && result.value.apiKey).toBe('sk-ant-api03-abcdefghijk1234');
+  it('keeps keys per provider when switching', () => {
+    const s = withKeys();
+    const onRouter = s.activate('openrouter');
+    const backOnAnthropic = onRouter.activate('anthropic');
+    expect(onRouter.toConfig()).toMatchObject({ ok: true, value: { provider: 'openrouter', apiKey: 'sk-or-bbbb-2222' } });
+    expect(backOnAnthropic.toConfig()).toMatchObject({ ok: true, value: { provider: 'anthropic', apiKey: 'sk-ant-aaaa-1111' } });
   });
 
-  it('rejects unknown models and malformed keys', () => {
-    expect(ProviderSettings.create({ apiKey: 'k', model: 'gpt-x' }).ok).toBe(false);
-    expect(ProviderSettings.create({ apiKey: 'a b', model: 'claude-opus-5-5' }).ok).toBe(false);
+  it('refuses when only the other provider has a key', () => {
+    const s = settings((e) => e.update('anthropic', { apiKey: 'sk-ant-aaaa-1111' })).activate('openrouter');
+    const config = s.toConfig();
+    expect(!config.ok && config.error.message).toContain('OpenRouter API key');
+  });
+
+  it('clears only the chosen provider key', () => {
+    const cleared = withKeys().activate('openrouter').withoutKey();
+    expect(cleared.hasKey('openrouter')).toBe(false);
+    expect(cleared.hasKey('anthropic')).toBe(true);
+  });
+
+  it('masks keys', () => {
+    const s = settings((e) => e.update('anthropic', { apiKey: ' sk-ant-api03-abcdefghijk1234 ' }));
+    expect(s.maskedKey('anthropic')).toBe('sk-ant-…1234');
+  });
+
+  it('validates models per provider', () => {
+    expect(ProviderSettings.empty().update('anthropic', { model: 'gpt-x' }).ok).toBe(false);
+    const bad = ProviderSettings.empty().update('openrouter', { model: 'glm-flash' });
+    expect(!bad.ok && bad.error.code).toBe('invalid-model');
+    expect(ProviderSettings.empty().update('openrouter', { model: 'anthropic/claude-haiku-5.5' }).ok).toBe(true);
+    expect(ProviderSettings.empty().update('anthropic', { apiKey: 'a b' }).ok).toBe(false);
+  });
+
+  it('uses compact for OpenRouter and standard for Anthropic unless overridden', () => {
+    const s = ProviderSettings.empty();
+    expect(s.budget()).toEqual(CONTEXT_BUDGETS.standard);
+    expect(s.activate('openrouter').budget()).toEqual(CONTEXT_BUDGETS.compact);
+    const overridden = s.update('openrouter', { profile: 'standard' });
+    expect(overridden.ok && overridden.value.activate('openrouter').budget()).toEqual(CONTEXT_BUDGETS.standard);
+  });
+
+  it('forgets capabilities when the OpenRouter model changes', () => {
+    const s = settings((e) =>
+      e.update('openrouter', { capabilities: { status: 'found', structuredOutputs: true, tools: true } }),
+    );
+    expect(s.openrouter.capabilities.status).toBe('found');
+    const changed = s.update('openrouter', { model: 'anthropic/claude-haiku-5.5' });
+    expect(changed.ok && changed.value.openrouter.capabilities.status).toBe('unknown');
+  });
+});
+
+describe('chooseOutputMode', () => {
+  const router = (structuredOutputs: boolean, tools: boolean): ProviderConfig => ({
+    provider: 'openrouter',
+    apiKey: 'k',
+    model: 'a/b',
+    capabilities: { status: 'found', structuredOutputs, tools },
+  });
+
+  it('uses tools for Anthropic', () => {
+    expect(chooseOutputMode({ provider: 'anthropic', apiKey: 'k', model: 'claude-opus-5-5' })).toBe('tool');
+  });
+
+  it('prefers structured outputs, then tools, then prompted JSON', () => {
+    expect(chooseOutputMode(router(true, true))).toBe('json_schema');
+    expect(chooseOutputMode(router(false, true))).toBe('tool');
+    expect(chooseOutputMode(router(false, false))).toBe('prompted');
   });
 });

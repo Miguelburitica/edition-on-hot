@@ -14,7 +14,8 @@
     "dev": "pnpm --filter @hew/extension dev",
     "build": "pnpm --filter @hew/extension build",
     "fixture": "pnpm --filter @hew/demo-app dev",
-    "e2e": "pnpm --filter @hew/extension e2e"
+    "e2e": "pnpm --filter @hew/extension e2e",
+    "eval": "pnpm --filter @hew/eval eval"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

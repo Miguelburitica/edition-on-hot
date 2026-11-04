@@ -1,6 +1,9 @@
 import type { Result } from '../../shared/domain';
 import type { EditContext } from './edit-context';
-import type { InvalidProposalError, ProviderError } from './errors';
+import type { CatalogUnavailableError, InvalidProposalError, ProviderError } from './errors';
+import type { ProviderId } from './model';
+import type { ModelCapabilities } from './model-capabilities';
+import type { OutputMode } from './output-mode';
 import type { ProposalDraft } from './patch-proposal';
 import type { ProviderConfig, ProviderSettings } from './provider-settings';
 
@@ -8,13 +11,37 @@ export interface PatchGenerationRequest {
   readonly config: ProviderConfig;
   readonly context: EditContext;
   readonly prompt: string;
+  readonly mode: OutputMode;
   /** Validation issues from a previous attempt, so the model can correct itself. */
   readonly previousIssues?: readonly string[];
 }
 
+export interface GeneratorDiagnostics {
+  readonly latencyMs: number;
+  readonly costUsd?: number | undefined;
+}
+
+/**
+ * Raw model output: the JSON value the model produced, or `{ unparsedText }` when its answer was
+ * not JSON. Parsing and repair happen outside the generator.
+ */
+export interface GeneratorOutput {
+  readonly raw: unknown;
+  readonly diagnostics: GeneratorDiagnostics;
+}
+
 export interface PatchGenerator {
-  generate(request: PatchGenerationRequest): Promise<Result<ProposalDraft, InvalidProposalError | ProviderError>>;
+  generate(request: PatchGenerationRequest): Promise<Result<GeneratorOutput, ProviderError>>;
   ping(config: ProviderConfig): Promise<Result<void, ProviderError>>;
+}
+
+/** Validates raw output against the provider's wire format. */
+export interface ProposalParser {
+  parse(raw: unknown, provider: ProviderId): Result<ProposalDraft, InvalidProposalError>;
+}
+
+export interface ModelCatalog {
+  lookup(modelId: string): Promise<Result<ModelCapabilities, CatalogUnavailableError>>;
 }
 
 export interface ProviderSettingsRepository {

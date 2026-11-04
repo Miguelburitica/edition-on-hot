@@ -1,3 +1,5 @@
+import { CONTEXT_BUDGETS, type ContextBudget } from './context-budget';
+
 export interface EditContextProps {
   readonly html: string;
   readonly ancestors: readonly string[];
@@ -7,19 +9,25 @@ export interface EditContextProps {
   readonly pageTitle: string;
 }
 
-/** What the model is shown about the selection. Bounded in size and free of form values. */
+/** What the model is shown about the selection. Bounded by a budget and free of form values. */
 export class EditContext {
-  static readonly MAX_HTML_CHARS = 12_000;
-
   private constructor(
     readonly props: EditContextProps,
     readonly truncated: boolean,
   ) {}
 
-  static create(props: EditContextProps, maxChars = EditContext.MAX_HTML_CHARS): EditContext {
+  /** Enforces the budget even if the caller serialized more than it allows. */
+  static create(props: EditContextProps, budget: ContextBudget = CONTEXT_BUDGETS.standard): EditContext {
     const html = stripValueAttributes(props.html);
-    const truncated = html.length > maxChars;
-    return new EditContext({ ...props, html: truncated ? html.slice(0, maxChars) : html }, truncated);
+    const truncated = html.length > budget.maxHtmlChars;
+    return new EditContext(
+      {
+        ...props,
+        html: truncated ? html.slice(0, budget.maxHtmlChars) : html,
+        targetIds: props.targetIds.slice(0, budget.maxTargets),
+      },
+      truncated,
+    );
   }
 
   hasTarget(id: string): boolean {

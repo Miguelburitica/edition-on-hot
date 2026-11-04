@@ -1,8 +1,14 @@
 import type { AiError } from '@hew/core/ai/application';
-import type { PatchRequester } from '@hew/core/editing/infrastructure';
+import type { BudgetRequester, PatchRequester } from '@hew/core/editing/infrastructure';
 import { err } from '@hew/core/shared/domain';
 import type { z } from 'zod';
-import { generatePatchMessage, type GeneratePatchMessage, type GeneratePatchReply } from './messages';
+import {
+  generatePatchMessage,
+  type GeneratePatchMessage,
+  type GeneratePatchReply,
+  type GetContextBudgetMessage,
+  type GetContextBudgetReply,
+} from './messages';
 
 export interface MessageSenderLike {
   readonly tab?: { readonly id?: number } | undefined;
@@ -45,6 +51,19 @@ export function bridgedPatchRequester(send: SendMessage): PatchRequester {
     const message: GeneratePatchMessage = generatePatchMessage.parse({ type: 'ai/generatePatch', request });
     try {
       const reply = (await send(message)) as GeneratePatchReply | undefined;
+      return reply ?? err(bridgeError('The extension background did not answer. Reload the extension.'));
+    } catch (error) {
+      return err(bridgeError(error instanceof Error ? error.message : 'Could not reach the extension background.'));
+    }
+  };
+}
+
+/** BudgetRequester for the content script: asks the background for the active model's budget. */
+export function bridgedBudgetRequester(send: SendMessage): BudgetRequester {
+  return async () => {
+    const message: GetContextBudgetMessage = { type: 'ai/getContextBudget' };
+    try {
+      const reply = (await send(message)) as GetContextBudgetReply | undefined;
       return reply ?? err(bridgeError('The extension background did not answer. Reload the extension.'));
     } catch (error) {
       return err(bridgeError(error instanceof Error ? error.message : 'Could not reach the extension background.'));

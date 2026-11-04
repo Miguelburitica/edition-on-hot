@@ -1,15 +1,16 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { err, ok, type Result } from '../../shared/domain';
 import {
-  InvalidProposalError,
   ProviderError,
+  type GeneratorOutput,
   type PatchGenerationRequest,
   type PatchGenerator,
-  type ProposalDraft,
   type ProviderConfig,
 } from '../domain';
-import { APPLY_PATCH_TOOL_NAME, applyPatchJsonSchema, parseApplyPatchInput } from './patch-schema';
+import { APPLY_PATCH_TOOL_NAME, applyPatchJsonSchema } from './patch-schema';
 import { buildUserMessage, SYSTEM_PROMPT } from './prompt-builder';
+
+type AnthropicConfig = Extract<ProviderConfig, { provider: 'anthropic' }>;
 
 export interface AnthropicGeneratorOptions {
   /** Custom fetch, used by tests. */
@@ -32,11 +33,14 @@ const TOOL: Anthropic.Beta.BetaTool = {
 export class AnthropicPatchGenerator implements PatchGenerator {
   constructor(private readonly options: AnthropicGeneratorOptions = {}) {}
 
-  async generate(request: PatchGenerationRequest): Promise<Result<ProposalDraft, InvalidProposalError | ProviderError>> {
+  async generate(request: PatchGenerationRequest): Promise<Result<GeneratorOutput, ProviderError>> {
+    const config = request.config;
+    if (config.provider !== 'anthropic') return err(new ProviderError('unknown', 'wrong provider for this adapter'));
+    const started = Date.now();
     let response: Anthropic.Beta.BetaMessage;
     try {
-      response = await this.client(request.config).beta.messages.create({
-        model: request.config.model,
+      response = await this.client(config).beta.messages.create({
+        model: config.model,
         max_tokens: 16000,
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
@@ -54,18 +58,21 @@ export class AnthropicPatchGenerator implements PatchGenerator {
     if (response.stop_reason === 'refusal') {
       return err(new ProviderError('refusal', response.stop_details?.explanation ?? undefined));
     }
+    const diagnostics = { latencyMs: Date.now() - started };
     const call = response.content.find(
       (block): block is Anthropic.Beta.BetaToolUseBlock => block.type === 'tool_use' && block.name === APPLY_PATCH_TOOL_NAME,
     );
-    if (!call) {
-      const reason = response.stop_reason === 'max_tokens' ? 'the response was cut off' : 'no tool call was made';
-      return err(new InvalidProposalError([`You must call ${APPLY_PATCH_TOOL_NAME}; ${reason}.`]));
-    }
-    const parsed = parseApplyPatchInput(call.input);
-    return parsed.ok ? ok(parsed.value) : err(new InvalidProposalError(parsed.issues));
+    if (call) return ok({ raw: call.input, diagnostics });
+    // No tool call: hand the text on, so repair can still extract JSON written as prose.
+    const text = response.content
+      .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n');
+    return ok({ raw: { unparsedText: text }, diagnostics });
   }
 
   async ping(config: ProviderConfig): Promise<Result<void, ProviderError>> {
+    if (config.provider !== 'anthropic') return err(new ProviderError('unknown', 'wrong provider for this adapter'));
     try {
       await this.client(config).messages.create({
         model: config.model,
@@ -79,7 +86,7 @@ export class AnthropicPatchGenerator implements PatchGenerator {
     }
   }
 
-  private client(config: ProviderConfig): Anthropic {
+  private client(config: AnthropicConfig): Anthropic {
     return new Anthropic({
       // Explicit values so ambient env/profile credentials can never override the user's key.
       apiKey: config.apiKey,

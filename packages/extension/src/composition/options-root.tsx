@@ -1,19 +1,24 @@
-import { ClearApiKey, GetProviderSettings, SaveProviderSettings, TestProviderConnection } from '@hew/core/ai/application';
-import { AnthropicPatchGenerator } from '@hew/core/ai/infrastructure';
+import {
+  ClearApiKey,
+  GetProviderSettings,
+  LookupModel,
+  SaveProviderSettings,
+  TestProviderConnection,
+} from '@hew/core/ai/application';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { browser } from 'wxt/browser';
-import { ChromeSettingsRepository, type StorageAreaLike } from '../infrastructure';
 import { OptionsApp } from '../presentation/options/OptionsApp';
 import '../presentation/shared/theme.css';
+import { createAiServices } from './ai-services';
 
 export function mountOptions(root: HTMLElement): void {
-  const settings = new ChromeSettingsRepository(browser.storage.local as unknown as StorageAreaLike);
+  const { router, catalog, settings } = createAiServices();
   const useCases = {
     get: new GetProviderSettings(settings),
-    save: new SaveProviderSettings(settings),
+    save: new SaveProviderSettings(settings, catalog),
     clear: new ClearApiKey(settings),
-    test: new TestProviderConnection(settings, new AnthropicPatchGenerator()),
+    test: new TestProviderConnection(settings, router),
+    lookup: new LookupModel(catalog),
   };
   createRoot(root).render(
     <StrictMode>
