@@ -70,6 +70,12 @@ describe('AnthropicPatchGenerator', () => {
     expect(result.ok && result.value.raw).toEqual({ unparsedText: 'Sure!' });
   });
 
+  it('reports an answer cut off at the output limit instead of passing on a partial patch', async () => {
+    const fetch = fetchReturning(200, message([toolUse({ summary: 'x' })], 'max_tokens'));
+    const result = await new AnthropicPatchGenerator({ fetch }).generate({ config, context, prompt: 'x', mode: 'tool' });
+    expect(!result.ok && result.error.code).toBe('provider-output-limit');
+  });
+
   it('includes previous issues in the retry message', async () => {
     const fetch = fetchReturning(200, message([toolUse({ summary: 's', ops: [{ type: 'remove', target: 't0' }] })]));
     await new AnthropicPatchGenerator({ fetch }).generate({ config, context, prompt: 'x', mode: 'tool', previousIssues: ['ops.0.type: bad'] });

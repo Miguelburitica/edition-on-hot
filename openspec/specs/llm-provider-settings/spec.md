@@ -140,6 +140,10 @@ The system SHALL fetch the models the user's account can use from the active pro
 - **WHEN** the user opens a provider's settings and a key is saved
 - **THEN** the model field offers the models the provider lists for that key, and settings show how many are available
 
+#### Scenario: Every listed model is offered
+- **WHEN** a model is already chosen and the user opens the model field
+- **THEN** every listed model is offered, not only those matching the current choice, and "Other model ID…" lets the user type an ID that is not listed
+
 #### Scenario: OpenCode lists only enabled models
 - **WHEN** the user's OpenCode account has not enabled a model
 - **THEN** that model is not offered, and entering it shows it as not found in the catalog

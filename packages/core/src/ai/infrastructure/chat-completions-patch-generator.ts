@@ -24,6 +24,7 @@ type ContentPart = { type?: string; text?: unknown };
 
 interface ChatCompletion {
   choices?: {
+    finish_reason?: string | null;
     message?: { content?: string | ContentPart[] | null; tool_calls?: { function?: { arguments?: string } }[] | null };
   }[];
   usage?: { cost?: number };
@@ -41,6 +42,17 @@ const STATUS_KINDS: Record<number, ProviderFailureKind> = {
 };
 
 type CompatibleConfig = Extract<ProviderConfig, { apiUrl: string }>;
+
+export const MAX_OUTPUT_TOKENS = 16000;
+const FALLBACK_OUTPUT_TOKENS = 4096;
+const MAX_TOKENS_REJECTED = /max_tokens|max_completion_tokens|max_output_tokens|maximum (?:output|completion) tokens/i;
+
+interface PostFailure {
+  readonly error: ProviderError;
+  readonly rejectedMaxTokens: boolean;
+}
+const failure = (error: ProviderError): PostFailure => ({ error, rejectedMaxTokens: false });
+const isUnparsed = (raw: unknown) => typeof raw === 'object' && raw !== null && 'unparsedText' in raw;
 
 /**
  * PatchGenerator for OpenAI-compatible chat completions APIs: OpenRouter, OpenCode and LiteLLM.
@@ -61,7 +73,9 @@ export class ChatCompletionsPatchGenerator implements PatchGenerator {
     const openRouter = config.provider === 'openrouter';
     const body = {
       model: config.model,
-      max_tokens: 4096,
+      // Reasoning models spend thousands of hidden tokens before the answer; a low cap left them
+      // with nothing to write. Proxies whose model caps output lower get one retry at the old cap.
+      max_tokens: MAX_OUTPUT_TOKENS,
       // OpenRouter-only: report the cost, and route only to hosts that honour the output format.
       ...(openRouter ? { usage: { include: true } } : {}),
       messages: [
@@ -71,11 +85,19 @@ export class ChatCompletionsPatchGenerator implements PatchGenerator {
       ...modeParameters(mode),
       ...(openRouter && mode !== 'prompted' ? { provider: { require_parameters: true } } : {}),
     };
-    const response = await this.post(config, body);
-    if (!response.ok) return response;
+    let response = await this.post(config, body);
+    if (!response.ok && response.error.rejectedMaxTokens) {
+      response = await this.post(config, { ...body, max_tokens: FALLBACK_OUTPUT_TOKENS });
+    }
+    if (!response.ok) return err(response.error.error);
     const completion = response.value;
+    const raw = rawOutput(completion, mode);
+    // Cut off mid-answer: the JSON is incomplete, and asking again would hit the same limit.
+    if (completion.choices?.[0]?.finish_reason === 'length' && isUnparsed(raw)) {
+      return err(new ProviderError('output-limit'));
+    }
     return ok({
-      raw: rawOutput(completion, mode),
+      raw,
       diagnostics: {
         latencyMs: Date.now() - started,
         ...(typeof completion.usage?.cost === 'number' ? { costUsd: completion.usage.cost } : {}),
@@ -90,10 +112,10 @@ export class ChatCompletionsPatchGenerator implements PatchGenerator {
       max_tokens: 1,
       messages: [{ role: 'user', content: 'Reply with OK.' }],
     });
-    return response.ok ? ok(undefined) : response;
+    return response.ok ? ok(undefined) : err(response.error.error);
   }
 
-  private async post(config: CompatibleConfig, body: unknown): Promise<Result<ChatCompletion, ProviderError>> {
+  private async post(config: CompatibleConfig, body: unknown): Promise<Result<ChatCompletion, PostFailure>> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 60_000);
     try {
@@ -107,16 +129,19 @@ export class ChatCompletionsPatchGenerator implements PatchGenerator {
         signal: controller.signal,
       });
       const json = (await res.json().catch(() => ({}))) as ChatCompletion;
-      if (!res.ok) return err(statusError(res.status, json));
+      if (!res.ok) {
+        const rejectedMaxTokens = res.status === 400 && MAX_TOKENS_REJECTED.test(json.error?.message ?? '');
+        return err({ error: statusError(res.status, json), rejectedMaxTokens });
+      }
       // Errors raised mid-generation arrive with HTTP 200 and an `error` field.
-      if (json.error) return err(statusError(typeof json.error.code === 'number' ? json.error.code : 0, json));
+      if (json.error) return err(failure(statusError(typeof json.error.code === 'number' ? json.error.code : 0, json)));
       return ok(json);
     } catch (error) {
-      if (controller.signal.aborted) return err(new ProviderError('timeout'));
+      if (controller.signal.aborted) return err(failure(new ProviderError('timeout')));
       if (config.provider === 'litellm') {
-        return err(new ProviderError('network', `is the LiteLLM proxy running at ${config.apiUrl.replace(/\/v1$/, '')}?`));
+        return err(failure(new ProviderError('network', `is the LiteLLM proxy running at ${config.apiUrl.replace(/\/v1$/, '')}?`)));
       }
-      return err(new ProviderError('network', error instanceof Error ? error.message : undefined));
+      return err(failure(new ProviderError('network', error instanceof Error ? error.message : undefined)));
     } finally {
       clearTimeout(timer);
     }

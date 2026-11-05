@@ -75,6 +75,7 @@ export type ProviderFailureKind =
   | 'network'
   | 'timeout'
   | 'refusal'
+  | 'output-limit'
   | 'unknown';
 
 const PROVIDER_MESSAGES: Record<ProviderFailureKind, string> = {
@@ -88,6 +89,7 @@ const PROVIDER_MESSAGES: Record<ProviderFailureKind, string> = {
   network: 'Could not reach the provider. Check your connection.',
   timeout: 'The provider took too long to answer. Try again or simplify the request.',
   refusal: 'The model declined this request.',
+  'output-limit': 'The AI ran out of room before finishing the change. Select a smaller element, ask for a smaller change, or pick a model that reasons less.',
   unknown: 'The provider returned an unexpected error.',
 };
 

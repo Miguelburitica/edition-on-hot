@@ -48,7 +48,7 @@ async function saveOpenRouter(context: BrowserContext, extensionId: string, mode
   await options.goto(`chrome-extension://${extensionId}/options.html`);
   await options.getByRole('button', { name: /^OpenRouter/ }).click();
   await options.getByLabel('OpenRouter API key').fill(FAKE_OPENROUTER_KEY);
-  await options.getByLabel('OpenRouter model').fill(model);
+  await chooseModel(options, 'OpenRouter', model);
   await options.getByRole('button', { name: /^Save/ }).click();
   return options;
 }
@@ -172,7 +172,7 @@ test('OpenRouter: model ids are validated and checked against the catalog', asyn
   const options = await saveOpenRouter(context, extensionId, 'glm-flash');
   await expect(options.getByRole('status')).toContainText('Use the vendor/model format');
 
-  await options.getByLabel('OpenRouter model').fill('acme/unknown-model');
+  await chooseModel(options, 'OpenRouter', 'acme/unknown-model');
   await expect(options.getByTestId('model-status')).toHaveText('Not found in the OpenRouter catalog. You can still save it.');
   await options.getByRole('button', { name: /^Save/ }).click();
   await expect(options.getByRole('status')).toHaveText('Settings saved. OpenRouter is the active provider.');
@@ -182,7 +182,7 @@ test('OpenCode: the model is checked against its catalog and the edit loop runs 
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
   await options.getByRole('button', { name: /^OpenCode/ }).click();
-  await expect(options.getByLabel('OpenCode model')).toHaveValue('glm-5.3-flash');
+  await expect(options.getByLabel('OpenCode model', { exact: true })).toHaveValue('glm-5.3-flash');
   await expect(options.getByTestId('model-status')).toHaveText(/Found in the OpenCode catalog · supports structured outputs and tools/);
   await options.getByLabel('OpenCode API key').fill('sk-oc-e2e-placeholder-7777');
   await options.getByRole('button', { name: /^Save/ }).click();
@@ -207,7 +207,7 @@ test('LiteLLM: a proxy URL and model without a key are saved and survive a reloa
   await expect(options.getByRole('status')).toContainText('Set the LiteLLM model');
 
   await options.getByLabel('LiteLLM proxy URL').fill('https://llm.example.com/v1/');
-  await options.getByLabel('LiteLLM model').fill('team-gpt');
+  await chooseModel(options, 'LiteLLM', 'team-gpt');
   await expect(options.getByTestId('model-status')).toContainText('Found in the LiteLLM proxy');
   await options.getByRole('button', { name: /^Save/ }).click();
   await expect(options.getByRole('status')).toHaveText('Settings saved. LiteLLM is the active provider.');
@@ -275,6 +275,15 @@ test('a change with no visible effect is flagged and its ops are listed', async 
   await expect(entry).toContainText('No visible effect: rule ".does-not-exist" matched nothing');
 });
 
+/** Picks a listed model, or types the ID through "Other model ID…" when it is not listed. */
+async function chooseModel(page: Page, provider: string, id: string) {
+  const select = page.locator('select[name="modelChoice"]');
+  if ((await select.count()) === 0) return page.getByLabel(`${provider} model`, { exact: true }).fill(id);
+  if ((await select.locator(`option[value="${id}"]`).count()) > 0) return select.selectOption(id);
+  await select.selectOption('__custom__');
+  await page.getByLabel(`${provider} model ID`).fill(id);
+}
+
 test('settings list the models the account can use, for every provider', async ({ context, extensionId }) => {
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
@@ -284,11 +293,11 @@ test('settings list the models the account can use, for every provider', async (
   await expect(options.getByTestId('model-list-status')).toHaveText('3 models available to your account');
   await expect(options.getByTestId('model-options').locator('option[value="claude-haiku-5-5"]')).toHaveCount(1);
   // Any listed Claude model can be picked, not only the two built-in ones.
-  await options.getByLabel('Anthropic model').fill('claude-haiku-5-5');
+  await chooseModel(options, 'Anthropic', 'claude-haiku-5-5');
   await options.getByRole('button', { name: 'Save' }).click();
   await expect(options.getByRole('status')).toHaveText('Settings saved. Anthropic is the active provider.');
   await options.reload();
-  await expect(options.getByLabel('Anthropic model')).toHaveValue('claude-haiku-5-5');
+  await expect(options.getByLabel('Anthropic model', { exact: true })).toHaveValue('claude-haiku-5-5');
 
   // Without a key OpenCode shows its public list; with one, only the account's enabled models.
   await options.getByRole('button', { name: /^OpenCode/ }).click();
@@ -298,6 +307,14 @@ test('settings list the models the account can use, for every provider', async (
   await expect(options.getByTestId('model-list-status')).toHaveText('3 models available to your account');
   await expect(options.getByTestId('model-options').locator('option[value="kimi-k3"]')).toHaveCount(1);
   await expect(options.getByTestId('model-options').locator('option[value="gpt-5.5"]')).toHaveCount(0);
+  // Every listed model is offered, whatever is already chosen (a datalist would filter by it).
+  await expect(options.getByTestId('model-options').locator('option')).toHaveCount(4);
+  await options.getByTestId('model-options').selectOption('kimi-k3');
+  await expect(options.getByLabel('OpenCode model', { exact: true })).toHaveValue('kimi-k3');
+  // An ID that is not listed can still be typed.
+  await options.getByTestId('model-options').selectOption('__custom__');
+  await options.getByLabel('OpenCode model ID').fill('my-private-model');
+  await expect(options.getByLabel('OpenCode model ID')).toHaveValue('my-private-model');
 });
 
 test('design system: extract from the page, guide generation, import tokens, inject them and switch off', async ({ context, extensionId }) => {

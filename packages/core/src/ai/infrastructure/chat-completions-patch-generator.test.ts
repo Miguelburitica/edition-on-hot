@@ -117,6 +117,32 @@ describe('ChatCompletionsPatchGenerator', () => {
     expect(tool.ok && tool.value.raw).toEqual(draft);
   });
 
+  it('leaves room for reasoning models and reports an answer cut off at the limit', async () => {
+    const ok = reply(200, completion({ content: JSON.stringify(draft) }));
+    await run(ok, 'json_schema');
+    expect(bodyOf(ok).max_tokens).toBe(16000);
+
+    // GLM through OpenCode: all tokens went to hidden reasoning and the answer is empty.
+    const cut = reply(200, { choices: [{ finish_reason: 'length', message: { content: '' } }] });
+    const empty = await run(cut, 'json_schema');
+    expect(!empty.ok && empty.error.code).toBe('provider-output-limit');
+    const partial = await run(reply(200, { choices: [{ finish_reason: 'length', message: { content: '{"summary":"x","ops":[' } }] }), 'prompted');
+    expect(!partial.ok && partial.error.code).toBe('provider-output-limit');
+    // A complete answer that happens to end at the limit is still used.
+    const full = await run(reply(200, { choices: [{ finish_reason: 'length', message: { content: JSON.stringify(draft) } }] }), 'json_schema');
+    expect(full.ok && full.value.raw).toEqual(draft);
+  });
+
+  it('retries once with a smaller output limit when the host rejects max_tokens', async () => {
+    const fetch = vi
+      .fn(async (_url: unknown, _init?: RequestInit) => new Response(JSON.stringify(completion({ content: JSON.stringify(draft) })), { status: 200 }))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ error: { message: 'max_tokens: 16000 > 8192, which is the maximum allowed' } }), { status: 400 }));
+    const result = await run(fetch, 'json_schema');
+    expect(result.ok && result.value.raw).toEqual(draft);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetch.mock.calls[1]![1]!.body)).max_tokens).toBe(4096);
+  });
+
   it('maps errors returned inside a 200 body', async () => {
     const result = await run(reply(200, { error: { code: 402, message: 'Insufficient credits' } }), 'json_schema');
     expect(!result.ok && result.error.code).toBe('provider-credits');
