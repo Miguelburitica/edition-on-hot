@@ -1,4 +1,5 @@
-import type { SessionSnapshot, UseCaseError } from '@hew/core/editing/application';
+import type { ChangeLog, SessionSnapshot, UseCaseError } from '@hew/core/editing/application';
+import type { DesignSystemDraftView } from '@hew/core/design-system/application';
 import type { AiError, ContextBudget, GeneratePatchResponse } from '@hew/core/ai/application';
 import type { Result } from '@hew/core/shared/domain';
 import { z } from 'zod';
@@ -16,9 +17,15 @@ export const editorCommand = z.discriminatedUnion('type', [
 ]);
 export type EditorCommand = z.infer<typeof editorCommand>;
 
+export interface PageInfo {
+  readonly url: string;
+  readonly title: string;
+}
+
 export interface EditorState {
   readonly snapshot: SessionSnapshot;
   readonly picking: boolean;
+  readonly page: PageInfo;
 }
 
 export type EditorResponse = Result<EditorState, UseCaseError & { readonly state?: EditorState }>;
@@ -49,3 +56,25 @@ export type GeneratePatchReply = Result<GeneratePatchResponse, AiError>;
 export const getContextBudgetMessage = z.object({ type: z.literal('ai/getContextBudget') });
 export type GetContextBudgetMessage = z.infer<typeof getContextBudgetMessage>;
 export type GetContextBudgetReply = Result<ContextBudget, AiError>;
+
+/** Page-level commands an extension page sends to a tab's content script, besides editing. */
+export const pageCommand = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('editing/exportChanges') }),
+  z.object({ type: z.literal('designSystem/extract') }),
+  z.object({
+    type: z.literal('designSystem/inject'),
+    // Re-checked by the injector; bounded here so a page message cannot flood the stylesheet.
+    variables: z
+      .record(z.string().regex(/^--[a-zA-Z0-9_-]+$/), z.string().max(200))
+      .refine((v) => Object.keys(v).length <= 400)
+      .nullable(),
+  }),
+]);
+export type PageCommand = z.infer<typeof pageCommand>;
+
+export interface PageReplies {
+  'editing/exportChanges': { readonly page: PageInfo; readonly log: ChangeLog };
+  'designSystem/extract': { readonly page: PageInfo; readonly draft: DesignSystemDraftView };
+  'designSystem/inject': { readonly injected: number };
+}
+export type PageReply<T extends PageCommand['type']> = Result<PageReplies[T], UseCaseError>;

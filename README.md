@@ -18,6 +18,16 @@ pnpm fixture        # demo page at http://localhost:5179
 
 Load `packages/extension/dist/chrome-mv3` with **chrome://extensions → Developer mode → Load unpacked**. Add your key on the extension's options page (for LiteLLM, the proxy URL; its key is optional, and saving asks Chrome for access to that host only), open a page, click the toolbar icon to open the side panel, then **Select element** and describe the change. `pnpm dev` runs WXT in watch mode with its own browser profile.
 
+The model field lists the models your key can use (OpenRouter's account list, OpenCode's enabled models, Anthropic's `/v1/models`, or your LiteLLM proxy's models); **Refresh models** reloads it.
+
+## Design systems
+
+In the side panel, **Extract from page** captures the site's design system: its `:root` custom properties, the most-used colors, spacing, radii, font sizes, fonts and shadows (as `--ds-…` tokens), and component patterns such as buttons, inputs and cards with their classes. **Import tokens…** reads a W3C Design Tokens (DTCG) JSON file, and **Export** writes one. One design system is active per site. Every change request on that site includes it, so the model uses `var(--token)` and the component classes. Tokens the page does not define are injected as root custom properties, so the preview renders them.
+
+## Exporting a session as a spec
+
+**Export spec** turns the changes currently applied into a spec: each change's prompt, a requirement with a WHEN/THEN scenario, the operations with their target selectors, HTML and CSS, the design tokens used, and implementation tasks. Choose **Markdown**, **OpenSpec change (.zip)** (unzip it into a repo's `openspec/changes/`; it passes `openspec validate --strict`) or **JSON**, or copy the Markdown.
+
 ## Checks
 
 | Command | What it runs |
@@ -37,7 +47,7 @@ Load `packages/extension/dist/chrome-mv3` with **chrome://extensions → Develop
 OPENROUTER_API_KEY=sk-or-… pnpm eval --model z-ai/glm-5.3-flash --model anthropic/claude-haiku-5.5
 ```
 
-The key can also live in a git-ignored `.env` at the repo root (`OPENROUTER_API_KEY` or `OPEN_ROUTER_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`, `LITELLM_BASE_URL` / `LITELLM_API_KEY`); variables set in the shell take precedence.
+The key can also live in a git-ignored `.env` at the repo root (`OPENROUTER_API_KEY` or `OPEN_ROUTER_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY` or `OPENCODE_APIKEY`, `LITELLM_BASE_URL` / `LITELLM_API_KEY`); variables set in the shell take precedence.
 
 Other providers: `--provider opencode` (uses `OPENCODE_API_KEY`, model ids like `glm-5.3-flash`) and `--provider litellm` (uses `LITELLM_BASE_URL`, e.g. `http://localhost:4000`, plus `LITELLM_API_KEY` if your proxy requires one; model ids are the names your proxy exposes).
 

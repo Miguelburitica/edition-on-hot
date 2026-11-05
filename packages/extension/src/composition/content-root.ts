@@ -1,6 +1,7 @@
 import {
   ApplyPromptToSelection,
   ClearSelection,
+  ExportSessionChanges,
   GetSessionSnapshot,
   GoToVersion,
   RedoChangeset,
@@ -20,6 +21,8 @@ import {
   InMemoryEditSessionRepository,
   OVERLAY_ATTR,
 } from '@hew/core/editing/infrastructure';
+import { ExtractDesignSystem } from '@hew/core/design-system/application';
+import { DomDesignSystemExtractor, DomTokenInjector } from '@hew/core/design-system/infrastructure';
 import { err, ok, type Result } from '@hew/core/shared/domain';
 import { browser } from 'wxt/browser';
 import {
@@ -27,7 +30,10 @@ import {
   bridgedPatchRequester,
   createHandler,
   editorCommand,
+  pageCommand,
   type EditorCommand,
+  type PageCommand,
+  type PageInfo,
   type EditorResponse,
   type EditorState,
   type EditorStateChanged,
@@ -62,10 +68,15 @@ export function startContent(): void {
     snapshot: new GetSessionSnapshot(deps),
   };
   const overlay = new PickerOverlay(document, { hostAttribute: OVERLAY_ATTR, describe: describeElement });
+  const exportChanges = new ExportSessionChanges(deps);
+  const extractDesignSystem = new ExtractDesignSystem(new DomDesignSystemExtractor(document, window));
+  const injector = new DomTokenInjector(document, window);
+  const page = (): PageInfo => ({ url: location.href, title: document.title });
 
   const currentState = async (): Promise<EditorState> => ({
     snapshot: await useCases.snapshot.execute({ sessionId: SESSION_ID }),
     picking: overlay.isPicking,
+    page: page(),
   });
 
   const outlineSelection = (snapshot: SessionSnapshot) => {
@@ -117,6 +128,21 @@ export function startContent(): void {
     }
   };
 
+  const handlePage = async (command: PageCommand) => {
+    switch (command.type) {
+      case 'editing/exportChanges':
+        return ok({ page: page(), log: await exportChanges.execute({ sessionId: SESSION_ID }) });
+      case 'designSystem/extract': {
+        const draft = extractDesignSystem.execute();
+        return draft.ok ? ok({ page: page(), draft: draft.value }) : draft;
+      }
+      case 'designSystem/inject':
+        return ok({ injected: injector.inject(command.variables) });
+    }
+  };
+
+  type AddListener = Parameters<typeof browser.runtime.onMessage.addListener>[0];
   const listener: RuntimeListener = createHandler(editorCommand, handle, browser.runtime.id);
-  browser.runtime.onMessage.addListener(listener as Parameters<typeof browser.runtime.onMessage.addListener>[0]);
+  browser.runtime.onMessage.addListener(listener as AddListener);
+  browser.runtime.onMessage.addListener(createHandler(pageCommand, handlePage, browser.runtime.id) as AddListener);
 }

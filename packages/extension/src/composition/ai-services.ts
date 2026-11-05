@@ -1,16 +1,18 @@
-import type { ModelCatalog } from '@hew/core/ai/domain';
+import type { ModelCatalog, ModelLister } from '@hew/core/ai/domain';
 import {
+  AnthropicModelLister,
   AnthropicPatchGenerator,
   ChatCompletionsPatchGenerator,
   LiteLlmModelCatalog,
   ModelCatalogRouter,
+  ModelListerRouter,
   OpenCodeModelCatalog,
   OpenRouterModelCatalog,
   PatchGeneratorRouter,
 } from '@hew/core/ai/infrastructure';
 import { browser } from 'wxt/browser';
 import { ChromeSettingsRepository, type StorageAreaLike } from '../infrastructure';
-import { E2eModelCatalog, E2ePatchGenerator, e2eRequestHostAccess } from './e2e-patch-generator';
+import { E2eModelCatalog, E2eModelLister, E2ePatchGenerator, e2eRequestHostAccess } from './e2e-patch-generator';
 
 /** AI adapters shared by the background and options composition roots. */
 export function createAiServices() {
@@ -24,17 +26,17 @@ export function createAiServices() {
     opencode: chat,
     litellm: chat,
   });
-  const catalog: ModelCatalog = e2e
-    ? new E2eModelCatalog()
-    : new ModelCatalogRouter({
-        openrouter: new OpenRouterModelCatalog(),
-        opencode: new OpenCodeModelCatalog(),
-        litellm: new LiteLlmModelCatalog(),
-      });
+  const openrouter = new OpenRouterModelCatalog();
+  const opencode = new OpenCodeModelCatalog();
+  const litellm = new LiteLlmModelCatalog();
+  const catalog: ModelCatalog = e2e ? new E2eModelCatalog() : new ModelCatalogRouter({ openrouter, opencode, litellm });
+  const lister: ModelLister = e2e
+    ? new E2eModelLister()
+    : new ModelListerRouter({ anthropic: new AnthropicModelLister(), openrouter, opencode, litellm });
   const settings = new ChromeSettingsRepository(browser.storage.local as unknown as StorageAreaLike);
   /** Asks Chrome for access to a user-configured host (the LiteLLM proxy). Must run inside a click. */
   const requestHostAccess = e2e
     ? e2eRequestHostAccess
     : (origin: string) => browser.permissions.request({ origins: [`${origin}/*`] });
-  return { router, catalog, settings, requestHostAccess };
+  return { router, catalog, lister, settings, requestHostAccess };
 }

@@ -4,6 +4,7 @@ import { anchor, FakePageGateway, fixedClock, InMemorySessions, SequentialIds } 
 import type { PatchSource } from '../domain';
 import {
   ApplyPromptToSelection,
+  ExportSessionChanges,
   GetSessionSnapshot,
   GoToVersion,
   RedoChangeset,
@@ -126,5 +127,22 @@ describe('Editing use cases', () => {
     const failed = await new GoToVersion(deps).execute({ sessionId: 'tab', version: 2 });
     expect(!failed.ok && failed.error.code).toBe('anchor-not-found');
     expect((await new GetSessionSnapshot(deps).execute({ sessionId: 'tab' })).currentVersion).toBe(0);
+  });
+
+  it('exports only the applied changesets, oldest first, with full op details', async () => {
+    const { deps } = setup();
+    await new SelectElement(deps).execute({ sessionId: 's', anchor: formAnchor, label: 'form' });
+    const apply = new ApplyPromptToSelection(deps);
+    await apply.execute({ sessionId: 's', prompt: 'add a banner' });
+    await apply.execute({ sessionId: 's', prompt: 'add another' });
+    await new UndoChangeset(deps).execute({ sessionId: 's' });
+
+    const log = await new ExportSessionChanges(deps).execute({ sessionId: 's' });
+    expect(log.changes).toHaveLength(1);
+    expect(log.changes[0]).toMatchObject({
+      prompt: 'add a banner',
+      summary: 'Adds a red banner',
+      ops: [{ type: 'insert', position: 'before', html: '<div>!</div>', target: { selector: 'form#signup', tag: 'form' } }],
+    });
   });
 });

@@ -58,3 +58,33 @@ export interface ProviderSettingsRepository {
   load(): Promise<ProviderSettings>;
   save(settings: ProviderSettings): Promise<void>;
 }
+
+/** A model the provider offers, as shown in the settings model field. */
+export interface ModelOption {
+  readonly id: string;
+  readonly label: string;
+  readonly capabilities: ModelCapabilities;
+}
+
+/** `account`: what the user's key can use; `public`: the provider's full list (no key, or none needed). */
+export interface ModelListing {
+  readonly models: readonly ModelOption[];
+  readonly scope: 'account' | 'public';
+}
+
+export interface ModelListQuery {
+  readonly provider: ProviderId;
+  /** API root (see `apiUrlOf`); Anthropic's is fixed. */
+  readonly apiUrl: string;
+  readonly apiKey: string | null;
+}
+
+/** Lists the models a provider offers to the user's key. */
+export interface ModelLister {
+  list(query: ModelListQuery): Promise<Result<ModelListing, CatalogUnavailableError>>;
+}
+
+/** Summary of the design system active for a page, from the Design System context (wired in composition). */
+export interface DesignGuidanceSource {
+  forPage(pageUrl: string, maxChars: number): Promise<string | null>;
+}

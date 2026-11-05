@@ -20,17 +20,21 @@ export function isProviderId(value: string): value is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(value);
 }
 
+/** Built-in Anthropic models, offered until the account's own list is loaded. */
 export const ANTHROPIC_MODEL_IDS = ['claude-opus-5-5', 'claude-sonnet-5-5'] as const;
-export type AnthropicModelId = (typeof ANTHROPIC_MODEL_IDS)[number];
+/** Any `claude-*` model the account lists; the built-in ones are defaults and suggestions. */
+export type AnthropicModelId = string;
 export const DEFAULT_ANTHROPIC_MODEL: AnthropicModelId = 'claude-opus-5-5';
 
-export const ANTHROPIC_MODEL_LABELS: Record<AnthropicModelId, string> = {
+export const ANTHROPIC_MODEL_LABELS: Readonly<Record<string, string>> = {
   'claude-opus-5-5': 'Claude Opus 5.5 (best quality)',
   'claude-sonnet-5-5': 'Claude Sonnet 5.5 (faster)',
 };
 
+const ANTHROPIC_MODEL_ID = /^claude-[a-z0-9][a-z0-9.-]*$/;
+
 export function isAnthropicModelId(value: string): value is AnthropicModelId {
-  return (ANTHROPIC_MODEL_IDS as readonly string[]).includes(value);
+  return ANTHROPIC_MODEL_ID.test(value);
 }
 
 /** OpenRouter model ids are `vendor/model`, optionally `~`-prefixed aliases or `:variant` suffixed. */

@@ -91,6 +91,32 @@ describe('ChatCompletionsPatchGenerator', () => {
     expect(!result.ok && result.error.code).toBe(code);
   });
 
+  it('reports models the account has not enabled, not a content-policy block (OpenCode 403)', async () => {
+    const body = { error: { type: 'server_error', message: 'Upstream request failed: Model access is disabled' } };
+    const result = await run(reply(403, body), 'json_schema');
+    expect(!result.ok && result.error.code).toBe('provider-model-access');
+    expect(!result.ok && result.error.message).toContain('(Model access is disabled)');
+  });
+
+  it("shows the provider's own words for rate limits and retired endpoints", async () => {
+    const limited = await run(reply(429, { error: { type: 'FreeUsageLimitError', message: 'Free usage limit reached.' } }), 'json_schema');
+    expect(!limited.ok && limited.error.message).toContain('(Free usage limit reached.)');
+    const gone = await run(reply(410, { error: { message: 'Upstream request failed: Endpoint is unavailable.' } }), 'json_schema');
+    expect(!gone.ok && gone.error.code).toBe('provider-unavailable');
+    expect(!gone.ok && gone.error.message).toContain('(Endpoint is unavailable.)');
+  });
+
+  it('reads content sent as parts, skipping thinking (Mistral through OpenCode)', async () => {
+    const content = [
+      { type: 'thinking', thinking: [{ type: 'text', text: 'Let me think' }], closed: true },
+      { type: 'text', text: JSON.stringify(draft) },
+    ];
+    const result = await run(reply(200, completion({ content, tool_calls: null })), 'json_schema');
+    expect(result.ok && result.value.raw).toEqual(draft);
+    const tool = await run(reply(200, completion({ content, tool_calls: null })), 'tool');
+    expect(tool.ok && tool.value.raw).toEqual(draft);
+  });
+
   it('maps errors returned inside a 200 body', async () => {
     const result = await run(reply(200, { error: { code: 402, message: 'Insufficient credits' } }), 'json_schema');
     expect(!result.ok && result.error.code).toBe('provider-credits');

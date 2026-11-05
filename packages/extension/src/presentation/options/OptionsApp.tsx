@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ClearApiKey,
   CompatibleProviderId,
   ContextProfile,
   GetProviderSettings,
+  ListModels,
   LookupModel,
+  ModelOption,
   ModelCapabilities,
   ProviderId,
   ProviderSettingsView,
@@ -19,7 +21,14 @@ export interface OptionsUseCases {
   readonly clear: ClearApiKey;
   readonly test: TestProviderConnection;
   readonly lookup: LookupModel;
+  readonly listModels: ListModels;
 }
+
+type ModelList =
+  | { readonly state: 'idle' }
+  | { readonly state: 'loading' }
+  | { readonly state: 'loaded'; readonly models: readonly ModelOption[]; readonly scope: 'account' | 'public' }
+  | { readonly state: 'error'; readonly message: string };
 
 type Status = { kind: 'ok' | 'error'; message: string } | null;
 
@@ -64,6 +73,24 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
   const [capabilities, setCapabilities] = useState<ModelCapabilities | null>(null);
   const [status, setStatus] = useState<Status>(null);
   const [testing, setTesting] = useState(false);
+  const [modelList, setModelList] = useState<ModelList>({ state: 'idle' });
+  const listRequest = useRef(0);
+
+  /** Loads the models the key can use; a newer request (or provider switch) wins. */
+  const loadModels = useCallback(
+    async (target: ProviderId, input: { apiKey?: string; baseUrl?: string } = {}) => {
+      const id = ++listRequest.current;
+      setModelList({ state: 'loading' });
+      const result = await useCases.listModels.execute({ provider: target, ...input });
+      if (id !== listRequest.current) return;
+      setModelList(
+        result.ok
+          ? { state: 'loaded', models: result.value.models, scope: result.value.scope }
+          : { state: 'error', message: result.error.message },
+      );
+    },
+    [useCases],
+  );
 
   const showProvider = (next: ProviderId, v: ProviderSettingsView) => {
     setProvider(next);
@@ -72,6 +99,12 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
     setProfile(v[next].profile);
     setBaseUrl(next === 'anthropic' ? '' : v[next].baseUrl);
     setCapabilities(next === 'anthropic' ? null : v[next].capabilities);
+    // Anthropic lists nothing without a key; the others have a public list or their own proxy.
+    if (next !== 'anthropic' || v.anthropic.hasKey) void loadModels(next);
+    else {
+      listRequest.current++;
+      setModelList({ state: 'idle' });
+    }
   };
 
   useEffect(() => {
@@ -85,11 +118,18 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
   useEffect(() => {
     if (provider === 'anthropic' || !view || model.trim() === '') return;
     const editable = view[provider].baseUrlEditable;
+    let current = true;
     const timer = setTimeout(
-      () => void useCases.lookup.execute({ provider, model, ...(editable ? { baseUrl } : {}) }).then(setCapabilities),
+      () =>
+        void useCases.lookup.execute({ provider, model, ...(editable ? { baseUrl } : {}) }).then((c) => {
+          if (current) setCapabilities(c);
+        }),
       400,
     );
-    return () => clearTimeout(timer);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
   }, [provider, model, baseUrl, useCases, view]);
 
   if (!view) return null;
@@ -97,6 +137,23 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
   const compatible = provider === 'anthropic' ? null : view[provider];
   const isActive = view.active === provider;
   const label = slot.label;
+  const suggestions: readonly { id: string; label: string }[] =
+    modelList.state === 'loaded' && modelList.models.length > 0
+      ? modelList.models
+      : provider === 'anthropic'
+        ? view.anthropic.models
+        : compatible!.suggestions;
+  const refreshModels = async () => {
+    // Listing a user-configured proxy needs browser access to it; ask inside the click.
+    if (compatible?.baseUrlEditable) {
+      const origin = originOf(baseUrl);
+      if (origin && !(await requestHostAccess(origin))) {
+        setModelList({ state: 'error', message: `Chrome access to ${origin} is needed to list its models.` });
+        return;
+      }
+    }
+    await loadModels(provider, { ...(apiKey.trim() ? { apiKey } : {}), ...(compatible?.baseUrlEditable ? { baseUrl } : {}) });
+  };
 
   const save = async () => {
     // A user-configured host needs browser access; the request must start inside the click.
@@ -131,6 +188,7 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
   const clear = async () => {
     const next = await useCases.clear.execute({ provider });
     setView(next);
+    showProvider(provider, next);
     setStatus({ kind: 'ok', message: `${label} API key removed.` });
   };
 
@@ -190,39 +248,42 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
         <span className="muted">{slot.hasKey ? `Saved key: ${slot.maskedKey}` : 'No key saved.'}</span>
       </label>
 
-      {provider === 'anthropic' ? (
-        <label className="stack" style={{ gap: 4 }}>
-          <span>Model</span>
-          <select name="model" value={model} onChange={(e) => setModel(e.target.value)}>
-            {view.anthropic.models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : (
-        <label className="stack" style={{ gap: 4 }}>
-          <span>{label} model</span>
-          <input
-            name="model"
-            list={`${provider}-models`}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : undefined}
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          />
-          <datalist id={`${provider}-models`}>
-            {compatible!.suggestions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </datalist>
-          {capabilities && model.trim() !== '' && <CapabilityStatus capabilities={capabilities} source={CATALOG_SOURCE[provider]} />}
-        </label>
-      )}
+      <label className="stack" style={{ gap: 4 }}>
+        <span>{label} model</span>
+        <input
+          name="model"
+          list={`${provider}-models`}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : 'Type to search the models'}
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+        />
+        <datalist id={`${provider}-models`} data-testid="model-options">
+          {suggestions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label}
+            </option>
+          ))}
+        </datalist>
+        {compatible && capabilities && model.trim() !== '' && (
+          <CapabilityStatus capabilities={capabilities} source={CATALOG_SOURCE[provider as CompatibleProviderId]} />
+        )}
+      </label>
+      <div className="row spread">
+        <span className="muted" data-testid="model-list-status" role="note">
+          {modelList.state === 'loading' && 'Loading models…'}
+          {modelList.state === 'idle' && (provider === 'anthropic' ? 'Save a key to list the models your account can use.' : '')}
+          {modelList.state === 'loaded' &&
+            `${modelList.models.length} model${modelList.models.length === 1 ? '' : 's'} ${
+              modelList.scope === 'account' ? 'available to your account' : 'available (add a key to see your account’s)'
+            }`}
+          {modelList.state === 'error' && `Could not load the model list: ${modelList.message}`}
+        </span>
+        <button className="link" disabled={modelList.state === 'loading'} onClick={() => void refreshModels()}>
+          Refresh models
+        </button>
+      </div>
 
       <label className="stack" style={{ gap: 4 }}>
         <span>Context size</span>

@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 const selectForm = () => new Selection(buildAnchor(document.querySelector('#f')!), 'form#f');
-const standard: BudgetRequester = async () => ok({ maxHtmlChars: 12_000, maxTargets: 40 });
+const standard: BudgetRequester = async () => ok({ maxHtmlChars: 12_000, maxTargets: 40, maxDesignChars: 1_000 });
 const diagnostics = { provider: 'openrouter' as const, model: 'a/b', mode: 'json_schema' as const, attempts: 1, repairs: [], latencyMs: 1 };
 
 describe('AiPatchSourceAdapter', () => {
@@ -51,7 +51,7 @@ describe('AiPatchSourceAdapter', () => {
 
   it('labels only as many targets as the budget allows', async () => {
     const requester = vi.fn<PatchRequester>(async () => ok({ summary: 's', ops: [{ type: 'remove', target: 't0' }], contextTruncated: false, diagnostics }));
-    const compact: BudgetRequester = async () => ok({ maxHtmlChars: 6_000, maxTargets: 2 });
+    const compact: BudgetRequester = async () => ok({ maxHtmlChars: 6_000, maxTargets: 2, maxDesignChars: 1_000 });
     await new AiPatchSourceAdapter(new DomAnchorResolver(document), requester, compact).propose(selectForm(), prompt('x'));
     expect(requester.mock.calls[0]![0].context.targetIds).toEqual(['t0', 't1']);
   });

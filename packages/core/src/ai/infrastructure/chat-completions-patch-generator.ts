@@ -19,10 +19,15 @@ export interface ChatCompletionsGeneratorOptions {
   readonly timeoutMs?: number;
 }
 
+/** Some hosts (e.g. Mistral through OpenCode) send content as parts: thinking, then text. */
+type ContentPart = { type?: string; text?: unknown };
+
 interface ChatCompletion {
-  choices?: { message?: { content?: string | null; tool_calls?: { function?: { arguments?: string } }[] } }[];
+  choices?: {
+    message?: { content?: string | ContentPart[] | null; tool_calls?: { function?: { arguments?: string } }[] | null };
+  }[];
   usage?: { cost?: number };
-  error?: { code?: number; message?: string };
+  error?: { code?: number | string; message?: string; type?: string };
 }
 
 const STATUS_KINDS: Record<number, ProviderFailureKind> = {
@@ -104,7 +109,7 @@ export class ChatCompletionsPatchGenerator implements PatchGenerator {
       const json = (await res.json().catch(() => ({}))) as ChatCompletion;
       if (!res.ok) return err(statusError(res.status, json));
       // Errors raised mid-generation arrive with HTTP 200 and an `error` field.
-      if (json.error) return err(statusError(json.error.code ?? 0, json));
+      if (json.error) return err(statusError(typeof json.error.code === 'number' ? json.error.code : 0, json));
       return ok(json);
     } catch (error) {
       if (controller.signal.aborted) return err(new ProviderError('timeout'));
@@ -146,9 +151,21 @@ function modeParameters(mode: OutputMode): Record<string, unknown> {
   }
 }
 
+/** The answer text: a plain string, or the `text` parts of a content array (thinking parts are skipped). */
+export function contentText(content: string | ContentPart[] | null | undefined): string | undefined {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text as string)
+    .join('');
+  return text === '' ? undefined : text;
+}
+
 function rawOutput(completion: ChatCompletion, mode: OutputMode): unknown {
   const message = completion.choices?.[0]?.message;
-  const text = mode === 'tool' ? (message?.tool_calls?.[0]?.function?.arguments ?? message?.content) : message?.content;
+  const content = contentText(message?.content);
+  const text = mode === 'tool' ? (message?.tool_calls?.[0]?.function?.arguments ?? content) : content;
   if (typeof text !== 'string') return { unparsedText: '' };
   try {
     return JSON.parse(text);
@@ -157,12 +174,25 @@ function rawOutput(completion: ChatCompletion, mode: OutputMode): unknown {
   }
 }
 
-function statusError(status: number, body: ChatCompletion): ProviderError {
-  const kind = STATUS_KINDS[status];
-  if (kind) return new ProviderError(kind);
+const MODEL_ACCESS = /access is disabled|not enabled|not available (?:for|to) your|no access to (?:this )?model|model access/i;
+
+/** The provider's own message, shortened, so users see e.g. "Free usage limit reached". */
+function providerDetail(body: ChatCompletion): string | undefined {
+  const message = body.error?.message?.replace(/^Upstream request failed:\s*/i, '').trim();
+  if (!message) return undefined;
+  return message.length > 160 ? `${message.slice(0, 157)}…` : message;
+}
+
+export function statusError(status: number, body: ChatCompletion): ProviderError {
   const message = body.error?.message ?? '';
-  if (status === 400 && /response_format|tool/i.test(message)) {
+  const detail = providerDetail(body);
+  if (MODEL_ACCESS.test(message)) return new ProviderError('model-access', detail);
+  if (status === 400 && /response_format|json_schema|tool/i.test(message)) {
     return new ProviderError('unknown', 'the model rejected the output format; re-check the model in settings');
   }
-  return new ProviderError('unknown', status ? `HTTP ${status}` : message || undefined);
+  if (status === 410) return new ProviderError('unavailable', detail);
+  const kind = STATUS_KINDS[status];
+  // Auth and moderation messages are already clear; for the rest, the provider's words help.
+  if (kind) return new ProviderError(kind, kind === 'auth' || kind === 'moderation' ? undefined : detail);
+  return new ProviderError('unknown', [status ? `HTTP ${status}` : '', detail].filter(Boolean).join(': ') || undefined);
 }

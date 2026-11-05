@@ -9,7 +9,13 @@
     "./editing/infrastructure": "./src/editing/infrastructure/index.ts",
     "./ai/domain": "./src/ai/domain/index.ts",
     "./ai/application": "./src/ai/application/index.ts",
-    "./ai/infrastructure": "./src/ai/infrastructure/index.ts"
+    "./ai/infrastructure": "./src/ai/infrastructure/index.ts",
+    "./design-system/domain": "./src/design-system/domain/index.ts",
+    "./design-system/application": "./src/design-system/application/index.ts",
+    "./design-system/infrastructure": "./src/design-system/infrastructure/index.ts",
+    "./handoff/domain": "./src/handoff/domain/index.ts",
+    "./handoff/application": "./src/handoff/application/index.ts",
+    "./handoff/infrastructure": "./src/handoff/infrastructure/index.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -10,7 +10,7 @@ import {
   type PageGateway,
   type PatchSource,
 } from '../domain';
-import { toSnapshot, toUseCaseError, type SessionSnapshot, type UseCaseError } from './dto';
+import { toChangeLog, toSnapshot, toUseCaseError, type ChangeLog, type SessionSnapshot, type UseCaseError } from './dto';
 import { loadOrStart } from './session-loader';
 
 export interface EditingDeps {
@@ -121,5 +121,14 @@ export class GetSessionSnapshot {
 
   async execute(input: { sessionId: string }): Promise<SessionSnapshot> {
     return toSnapshot(await loadOrStart(this.deps.sessions, input.sessionId));
+  }
+}
+
+/** The applied changes with full details, for exporting the session as a spec. */
+export class ExportSessionChanges {
+  constructor(private readonly deps: Pick<EditingDeps, 'sessions'>) {}
+
+  async execute(input: { sessionId: string }): Promise<ChangeLog> {
+    return toChangeLog(await loadOrStart(this.deps.sessions, input.sessionId));
   }
 }
