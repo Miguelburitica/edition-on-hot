@@ -14,4 +14,6 @@ export const CONTEXT_BUDGETS: Readonly<Record<ContextProfile, ContextBudget>> = 
 export const DEFAULT_CONTEXT_PROFILE: Readonly<Record<ProviderId, ContextProfile>> = {
   anthropic: 'standard',
   openrouter: 'compact',
+  opencode: 'compact',
+  litellm: 'standard',
 };

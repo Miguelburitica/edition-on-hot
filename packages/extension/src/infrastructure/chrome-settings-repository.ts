@@ -1,9 +1,11 @@
 import {
+  COMPATIBLE_PROVIDER_IDS,
   isContextProfile,
   isProviderId,
   ProviderSettings,
   UNKNOWN_CAPABILITIES,
   type ModelCapabilities,
+  type ProviderId,
   type ProviderSettingsRepository,
   type SlotUpdate,
 } from '@hew/core/ai/domain';
@@ -20,8 +22,15 @@ interface StoredSlot {
   model: string;
   profile: string;
   capabilities?: ModelCapabilities;
+  baseUrl?: string;
 }
 
+const PROVIDERS = ['anthropic', ...COMPATIBLE_PROVIDER_IDS] as const;
+
+/** v3 holds one slot per provider (Anthropic, OpenRouter, OpenCode, LiteLLM). */
+type StoredSettingsV3 = { version: 3; active: string } & Partial<Record<ProviderId, StoredSlot>>;
+
+/** v2 held Anthropic and OpenRouter. */
 interface StoredSettingsV2 {
   version: 2;
   active: string;
@@ -41,47 +50,50 @@ export class ChromeSettingsRepository implements ProviderSettingsRepository {
 
   async load(): Promise<ProviderSettings> {
     const stored = (await this.storage.get(SETTINGS_KEY))[SETTINGS_KEY];
-    const restored = isV2(stored) ? fromV2(stored) : isV1(stored) ? fromV1(stored) : null;
-    return restored ?? ProviderSettings.empty();
+    if (isSlotted(stored)) return fromSlots(stored);
+    if (isV1(stored)) return fromV1(stored) ?? ProviderSettings.empty();
+    return ProviderSettings.empty();
   }
 
   async save(settings: ProviderSettings): Promise<void> {
-    const value: StoredSettingsV2 = {
-      version: 2,
-      active: settings.active,
-      anthropic: { ...settings.anthropic },
-      openrouter: { ...settings.openrouter },
-    };
+    const value: StoredSettingsV3 = { version: 3, active: settings.active };
+    for (const provider of PROVIDERS) value[provider] = { ...settings.slot(provider) };
     await this.storage.set({ [SETTINGS_KEY]: value });
   }
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 
-function isV2(value: unknown): value is StoredSettingsV2 {
-  return isObject(value) && value.version === 2 && isObject(value.anthropic) && isObject(value.openrouter);
+function isSlotted(value: unknown): value is StoredSettingsV3 | StoredSettingsV2 {
+  return isObject(value) && (value.version === 2 || value.version === 3);
 }
 
 function isV1(value: unknown): value is StoredSettingsV1 {
   return isObject(value) && !('version' in value) && typeof value.model === 'string';
 }
 
-function slot(stored: StoredSlot): SlotUpdate {
+function slot(stored: unknown): SlotUpdate | null {
+  if (!isObject(stored)) return null;
   return {
     apiKey: typeof stored.apiKey === 'string' ? stored.apiKey : null,
-    model: stored.model,
+    ...(typeof stored.model === 'string' ? { model: stored.model } : {}),
     ...(typeof stored.profile === 'string' && isContextProfile(stored.profile) ? { profile: stored.profile } : {}),
-    ...(isObject(stored.capabilities) ? { capabilities: stored.capabilities } : {}),
+    ...(isObject(stored.capabilities) ? { capabilities: stored.capabilities as unknown as ModelCapabilities } : {}),
+    ...(typeof stored.baseUrl === 'string' ? { baseUrl: stored.baseUrl } : {}),
   };
 }
 
-function fromV2(stored: StoredSettingsV2): ProviderSettings | null {
-  const restored = ProviderSettings.restore({
-    active: isProviderId(stored.active) ? stored.active : 'anthropic',
-    anthropic: slot(stored.anthropic),
-    openrouter: { capabilities: UNKNOWN_CAPABILITIES, ...slot(stored.openrouter) },
-  });
-  return restored.ok ? restored.value : null;
+/** Restores each slot on its own: one invalid slot falls back to empty without losing the others' keys. */
+function fromSlots(stored: StoredSettingsV3 | StoredSettingsV2): ProviderSettings {
+  let settings = ProviderSettings.empty();
+  for (const provider of PROVIDERS) {
+    const update = slot((stored as Record<string, unknown>)[provider]);
+    if (!update) continue;
+    const withCapabilities = provider === 'anthropic' ? update : { capabilities: UNKNOWN_CAPABILITIES, ...update };
+    const next = settings.update(provider, withCapabilities);
+    if (next.ok) settings = next.value;
+  }
+  return settings.activate(isProviderId(stored.active) ? stored.active : 'anthropic');
 }
 
 function fromV1(stored: StoredSettingsV1): ProviderSettings | null {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CONTEXT_BUDGETS } from './context-budget';
 import { EditContext } from './edit-context';
-import { isOpenRouterModelId } from './model';
+import { isOpenRouterModelId, normalizeBaseUrl } from './model';
 import { chooseOutputMode } from './output-mode';
 import { PatchProposal } from './patch-proposal';
 import { ProviderSettings, type ProviderConfig } from './provider-settings';
@@ -155,12 +155,79 @@ describe('ProviderSettings', () => {
   });
 });
 
+describe('OpenCode and LiteLLM settings', () => {
+  it('start with their defaults and fixed or default URLs', () => {
+    const s = ProviderSettings.empty();
+    expect(s.opencode).toMatchObject({ model: 'glm-5.3-flash', profile: 'compact', baseUrl: 'https://opencode.ai/inference/openai/v1' });
+    expect(s.litellm).toMatchObject({ model: '', profile: 'standard', baseUrl: 'http://localhost:4000' });
+  });
+
+  it('requires an OpenCode key and sends requests to its fixed API', () => {
+    const missing = ProviderSettings.empty().activate('opencode').toConfig();
+    expect(!missing.ok && missing.error.message).toContain('OpenCode API key');
+    const s = settings((e) => e.update('opencode', { apiKey: 'sk-oc-1234', baseUrl: 'https://evil.example' })).activate('opencode');
+    expect(s.toConfig()).toMatchObject({ ok: true, value: { provider: 'opencode', apiUrl: 'https://opencode.ai/inference/openai/v1' } });
+  });
+
+  it('accepts a LiteLLM proxy without a key, but not without a model', () => {
+    const noModel = ProviderSettings.empty().activate('litellm').toConfig();
+    expect(!noModel.ok && noModel.error.code).toBe('missing-model');
+    const s = settings((e) => e.update('litellm', { model: 'team-gpt', baseUrl: 'https://llm.example.com/v1/' })).activate('litellm');
+    expect(s.toConfig()).toEqual({
+      ok: true,
+      value: {
+        provider: 'litellm',
+        apiKey: null,
+        model: 'team-gpt',
+        capabilities: { status: 'unknown', structuredOutputs: false, tools: false },
+        apiUrl: 'https://llm.example.com/v1',
+      },
+    });
+    expect(s.litellm.baseUrl).toBe('https://llm.example.com');
+  });
+
+  it('validates LiteLLM URLs and model names, and OpenCode model ids', () => {
+    const badUrl = ProviderSettings.empty().update('litellm', { baseUrl: 'ftp://x' });
+    expect(!badUrl.ok && badUrl.error.code).toBe('invalid-base-url');
+    expect(ProviderSettings.empty().update('litellm', { model: 'has space' }).ok).toBe(false);
+    const badId = ProviderSettings.empty().update('opencode', { model: 'z-ai/glm' });
+    expect(!badId.ok && badId.error.message).toContain('OpenCode model ID');
+  });
+
+  it('forgets LiteLLM capabilities when the proxy changes', () => {
+    const s = settings((e) =>
+      e.update('litellm', { model: 'm', capabilities: { status: 'found', structuredOutputs: true, tools: true } }),
+    );
+    const moved = s.update('litellm', { baseUrl: 'http://127.0.0.1:4001' });
+    expect(moved.ok && moved.value.litellm.capabilities.status).toBe('unknown');
+  });
+
+  it('restores missing slots as empty', () => {
+    const restored = ProviderSettings.restore({ active: 'litellm', anthropic: { apiKey: 'sk-ant-1' } });
+    expect(restored.ok && [restored.value.active, restored.value.hasKey('anthropic'), restored.value.litellm.baseUrl]).toEqual([
+      'litellm',
+      true,
+      'http://localhost:4000',
+    ]);
+  });
+});
+
+describe('normalizeBaseUrl', () => {
+  it('strips trailing slashes and /v1, and rejects non-http URLs', () => {
+    expect(normalizeBaseUrl(' http://localhost:4000/ ')).toBe('http://localhost:4000');
+    expect(normalizeBaseUrl('https://llm.example.com/litellm/v1')).toBe('https://llm.example.com/litellm');
+    expect(normalizeBaseUrl('localhost:4000')).toBeNull();
+    expect(normalizeBaseUrl('javascript:alert(1)')).toBeNull();
+  });
+});
+
 describe('chooseOutputMode', () => {
   const router = (structuredOutputs: boolean, tools: boolean): ProviderConfig => ({
     provider: 'openrouter',
     apiKey: 'k',
     model: 'a/b',
     capabilities: { status: 'found', structuredOutputs, tools },
+    apiUrl: 'https://openrouter.ai/api/v1',
   });
 
   it('uses tools for Anthropic', () => {

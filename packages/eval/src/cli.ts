@@ -4,14 +4,17 @@ import { parseArgs } from 'node:util';
 import { isProviderId, type PatchGenerator } from '@hew/core/ai/domain';
 import {
   AnthropicPatchGenerator,
+  ChatCompletionsPatchGenerator,
+  LiteLlmModelCatalog,
+  ModelCatalogRouter,
+  OpenCodeModelCatalog,
   OpenRouterModelCatalog,
-  OpenRouterPatchGenerator,
   PatchGeneratorRouter,
 } from '@hew/core/ai/infrastructure';
 import { ok } from '@hew/core/shared/domain';
 import { CASES, type EvalCase } from './cases';
 import { formatFailures, formatInconsistent, formatTable, summarize } from './report';
-import { requireKey, runEval } from './run';
+import { requireProviderEnv, runEval } from './run';
 
 // Keys may live in the repo-root .env (git-ignored); variables already set in the shell take precedence.
 const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
@@ -31,7 +34,7 @@ const { values } = parseArgs({
 
 const provider = values.provider ?? 'openrouter';
 if (!isProviderId(provider)) {
-  console.error(`Unknown provider "${provider}". Use openrouter or anthropic.`);
+  console.error(`Unknown provider "${provider}". Use openrouter, opencode, litellm or anthropic.`);
   process.exit(1);
 }
 const dryRun = values['dry-run'] ?? false;
@@ -52,24 +55,34 @@ const referenceGenerator = (evalCase: EvalCase): PatchGenerator => ({
   ping: async () => ok(undefined),
 });
 
-let apiKey = 'dry-run';
+let apiKey: string | null = 'dry-run';
+let baseUrl: string | undefined;
 let models = values.model ?? [];
 if (dryRun) {
   models = ['reference'];
 } else {
-  const key = requireKey(provider, process.env);
-  if (!key.ok) {
-    console.error(key.error);
+  const env = requireProviderEnv(provider, process.env);
+  if (!env.ok) {
+    console.error(env.error);
     process.exit(1);
   }
-  apiKey = key.value;
+  apiKey = env.value.apiKey;
+  baseUrl = env.value.baseUrl;
   if (models.length === 0) {
     console.error('Pass at least one --model, e.g. --model z-ai/glm-5.3-flash --model anthropic/claude-haiku-5.5');
     process.exit(1);
   }
 }
 
-const router = new PatchGeneratorRouter({ anthropic: new AnthropicPatchGenerator(), openrouter: new OpenRouterPatchGenerator() });
+const chat = new ChatCompletionsPatchGenerator();
+const router = new PatchGeneratorRouter({ anthropic: new AnthropicPatchGenerator(), openrouter: chat, opencode: chat, litellm: chat });
+const catalog = new ModelCatalogRouter({
+  openrouter: new OpenRouterModelCatalog(),
+  opencode: new OpenCodeModelCatalog(),
+  litellm: new LiteLlmModelCatalog(),
+});
+/** A syntactically valid model id per provider for the dry run's settings; it is never sent anywhere. */
+const DRY_RUN_MODEL = { anthropic: 'claude-opus-5-5', openrouter: 'eval/reference', opencode: 'reference', litellm: 'reference' } as const;
 const runs = cases.length * models.length * repeat;
 const times = repeat > 1 ? ` × ${repeat} runs` : '';
 console.log(
@@ -80,13 +93,13 @@ console.log(
 
 const results = await runEval({
   provider,
-  // A syntactically valid id is needed for the dry run's settings; it is never sent anywhere.
-  models: dryRun ? [provider === 'openrouter' ? 'eval/reference' : 'claude-opus-5-5'] : models,
+  models: dryRun ? [DRY_RUN_MODEL[provider]] : models,
   cases,
   apiKey,
+  baseUrl,
   generatorFor: (evalCase) => (dryRun ? referenceGenerator(evalCase) : router),
   parser: router,
-  catalog: dryRun ? null : new OpenRouterModelCatalog(),
+  catalog: dryRun ? null : catalog,
   repeat,
   onResult: (r) =>
     console.log(

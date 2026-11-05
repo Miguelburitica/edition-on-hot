@@ -1,4 +1,4 @@
-import { ProviderError, type ModelCapabilities, type ModelCatalog, type PatchGenerator } from '@hew/core/ai/domain';
+import { ProviderError, type CatalogQuery, type ModelCapabilities, type ModelCatalog, type PatchGenerator } from '@hew/core/ai/domain';
 import { err, ok } from '@hew/core/shared/domain';
 
 /**
@@ -43,10 +43,21 @@ export class E2ePatchGenerator implements PatchGenerator {
   }
 }
 
-/** Catalog for e2e builds: knows the suggested models, so tests never reach openrouter.ai. */
+/** Catalog for e2e builds: knows the suggested models, so tests never reach a real catalog or proxy. */
 export class E2eModelCatalog implements ModelCatalog {
-  async lookup(modelId: string) {
+  async lookup({ provider, model }: CatalogQuery) {
     const found: ModelCapabilities = { status: 'found', structuredOutputs: true, tools: true };
-    return ok(modelId.startsWith('z-ai/') || modelId.startsWith('anthropic/') ? found : { ...found, status: 'not-found' as const });
+    const known =
+      provider === 'openrouter'
+        ? model.startsWith('z-ai/') || model.startsWith('anthropic/')
+        : provider === 'opencode'
+          ? model === 'glm-5.3-flash' || model === 'claude-haiku-5-5'
+          : model === 'team-gpt';
+    // The fake LiteLLM proxy only proves the model exists, like a proxy without /model/info.
+    if (known && provider === 'litellm') return ok({ status: 'found' as const, structuredOutputs: false, tools: false });
+    return ok(known ? found : { ...found, status: 'not-found' as const });
   }
 }
+
+/** e2e builds grant host access without a browser prompt. */
+export const e2eRequestHostAccess = async (_origin: string) => true;

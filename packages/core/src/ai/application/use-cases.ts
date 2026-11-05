@@ -2,16 +2,22 @@ import { err, ok, type Result } from '../../shared/domain';
 import {
   ANTHROPIC_MODEL_IDS,
   ANTHROPIC_MODEL_LABELS,
+  apiUrlOf,
   chooseOutputMode,
+  COMPATIBLE_PROVIDER_IDS,
+  COMPATIBLE_PROVIDERS,
   EditContext,
   InvalidProposalError,
   isProviderId,
-  OPENROUTER_MODEL_SUGGESTIONS,
+  MissingModelError,
   PatchProposal,
+  PROVIDER_LABELS,
   repairDraft,
   UNKNOWN_CAPABILITIES,
   UnknownProviderError,
   type AnthropicModelId,
+  type CatalogQuery,
+  type CompatibleProviderId,
   type ContextBudget,
   type ContextProfile,
   type EditContextProps,
@@ -23,7 +29,7 @@ import {
   type ProposalParser,
   type ProposedOp,
   type ProviderId,
-  type ProviderSettings,
+  ProviderSettings,
   type ProviderSettingsRepository,
   type RepairKind,
 } from '../domain';
@@ -68,16 +74,25 @@ export interface ProviderSlotView {
   readonly profile: ContextProfile;
 }
 
+export interface CompatibleSlotView extends ProviderSlotView {
+  readonly label: string;
+  readonly suggestions: readonly { readonly id: string; readonly label: string }[];
+  readonly capabilities: ModelCapabilities;
+  readonly baseUrl: string;
+  readonly baseUrlEditable: boolean;
+  readonly keyRequired: boolean;
+}
+
 export interface ProviderSettingsView {
   readonly active: ProviderId;
   readonly anthropic: ProviderSlotView & {
+    readonly label: string;
     readonly model: AnthropicModelId;
     readonly models: readonly { readonly id: AnthropicModelId; readonly label: string }[];
   };
-  readonly openrouter: ProviderSlotView & {
-    readonly suggestions: readonly { readonly id: string; readonly label: string }[];
-    readonly capabilities: ModelCapabilities;
-  };
+  readonly openrouter: CompatibleSlotView;
+  readonly opencode: CompatibleSlotView;
+  readonly litellm: CompatibleSlotView;
 }
 
 const toAiError = (e: { code: string; message: string }): AiError => ({ code: e.code, message: e.message });
@@ -174,12 +189,37 @@ export class GetContextBudget {
   }
 }
 
-export class LookupModel {
-  constructor(private readonly catalog: ModelCatalog) {}
+export interface LookupModelInput {
+  readonly provider: CompatibleProviderId;
+  readonly model: string;
+  /** For LiteLLM, the proxy URL being edited; defaults to the saved one. */
+  readonly baseUrl?: string;
+}
 
-  /** Never fails: an unreachable catalog yields `status: 'unknown'`. */
-  async execute(modelId: string): Promise<ModelCapabilities> {
-    const result = await this.catalog.lookup(modelId.trim());
+export class LookupModel {
+  constructor(
+    private readonly catalog: ModelCatalog,
+    private readonly settings?: ProviderSettingsRepository,
+  ) {}
+
+  /**
+   * Looks up a model as it is being edited (with the saved key, for LiteLLM). Never fails: an
+   * unreachable catalog, an invalid URL or an empty model yields `status: 'unknown'`.
+   */
+  async execute(input: LookupModelInput): Promise<ModelCapabilities> {
+    const base = this.settings ? await this.settings.load() : ProviderSettings.empty();
+    const draft = base.update(input.provider, {
+      model: input.model,
+      ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+    });
+    if (!draft.ok) return UNKNOWN_CAPABILITIES;
+    const slot = draft.value.slot(input.provider);
+    if (slot.model === '') return UNKNOWN_CAPABILITIES;
+    return this.lookup({ provider: input.provider, model: slot.model, apiUrl: apiUrlOf(input.provider, slot.baseUrl), apiKey: slot.apiKey });
+  }
+
+  async lookup(query: CatalogQuery): Promise<ModelCapabilities> {
+    const result = await this.catalog.lookup(query);
     return result.ok ? result.value : UNKNOWN_CAPABILITIES;
   }
 }
@@ -198,6 +238,8 @@ export interface SaveProviderSettingsInput {
   readonly apiKey?: string;
   readonly model: string;
   readonly profile?: ContextProfile;
+  /** LiteLLM's proxy URL; ignored for providers with a fixed URL. */
+  readonly baseUrl?: string;
 }
 
 /** Saves one provider's slot and makes it the active provider. */
@@ -215,13 +257,21 @@ export class SaveProviderSettings {
       model: input.model,
       ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
       ...(input.profile ? { profile: input.profile } : {}),
+      ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
     });
     if (!shaped.ok) return err(toAiError(shaped.error));
 
     let next = shaped.value;
-    if (provider === 'openrouter') {
-      const capabilities = await new LookupModel(this.catalog).execute(next.openrouter.model);
-      const withCapabilities = next.update('openrouter', { capabilities });
+    if (provider !== 'anthropic') {
+      const slot = next.slot(provider);
+      if (slot.model === '') return err(toAiError(new MissingModelError(PROVIDER_LABELS[provider])));
+      const capabilities = await new LookupModel(this.catalog).lookup({
+        provider,
+        model: slot.model,
+        apiUrl: apiUrlOf(provider, slot.baseUrl),
+        apiKey: slot.apiKey,
+      });
+      const withCapabilities = next.update(provider, { capabilities });
       if (!withCapabilities.ok) return err(toAiError(withCapabilities.error));
       next = withCapabilities.value;
     }
@@ -260,19 +310,34 @@ function toView(settings: ProviderSettings): ProviderSettingsView {
   return {
     active: settings.active,
     anthropic: {
+      label: PROVIDER_LABELS.anthropic,
       hasKey: settings.hasKey('anthropic'),
       maskedKey: settings.maskedKey('anthropic'),
       model: settings.anthropic.model,
       profile: settings.anthropic.profile,
       models: ANTHROPIC_MODEL_IDS.map((id) => ({ id, label: ANTHROPIC_MODEL_LABELS[id] })),
     },
-    openrouter: {
-      hasKey: settings.hasKey('openrouter'),
-      maskedKey: settings.maskedKey('openrouter'),
-      model: settings.openrouter.model,
-      profile: settings.openrouter.profile,
-      suggestions: OPENROUTER_MODEL_SUGGESTIONS,
-      capabilities: settings.openrouter.capabilities,
-    },
+    openrouter: compatibleView(settings, 'openrouter'),
+    opencode: compatibleView(settings, 'opencode'),
+    litellm: compatibleView(settings, 'litellm'),
   };
 }
+
+function compatibleView(settings: ProviderSettings, provider: CompatibleProviderId): CompatibleSlotView {
+  const slot = settings.slot(provider);
+  const spec = COMPATIBLE_PROVIDERS[provider];
+  return {
+    label: PROVIDER_LABELS[provider],
+    hasKey: settings.hasKey(provider),
+    maskedKey: settings.maskedKey(provider),
+    model: slot.model,
+    profile: slot.profile,
+    suggestions: spec.suggestions,
+    capabilities: slot.capabilities,
+    baseUrl: slot.baseUrl,
+    baseUrlEditable: spec.baseUrlEditable,
+    keyRequired: spec.keyRequired,
+  };
+}
+
+export { COMPATIBLE_PROVIDER_IDS };

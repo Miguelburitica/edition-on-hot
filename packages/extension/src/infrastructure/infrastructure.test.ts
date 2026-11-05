@@ -17,7 +17,7 @@ class FakeStorage implements StorageAreaLike {
 }
 
 describe('ChromeSettingsRepository', () => {
-  it('round-trips v2 settings with both providers', async () => {
+  it('round-trips v3 settings with every provider', async () => {
     const storage = new FakeStorage();
     const repo = new ChromeSettingsRepository(storage);
     expect((await repo.load()).hasKey()).toBe(false);
@@ -31,9 +31,12 @@ describe('ChromeSettingsRepository', () => {
       capabilities: { status: 'found', structuredOutputs: true, tools: true },
     });
     if (!both.ok) throw both.error;
-    await repo.save(both.value.activate('openrouter'));
+    const all = both.value.update('litellm', { model: 'team-gpt', baseUrl: 'https://llm.example.com' });
+    if (!all.ok) throw all.error;
+    await repo.save(all.value.activate('openrouter'));
 
-    expect(storage.data[SETTINGS_KEY]).toMatchObject({ version: 2, active: 'openrouter' });
+    expect(storage.data[SETTINGS_KEY]).toMatchObject({ version: 3, active: 'openrouter', litellm: { baseUrl: 'https://llm.example.com' } });
+    expect((await repo.load()).litellm).toMatchObject({ model: 'team-gpt', baseUrl: 'https://llm.example.com', apiKey: null });
     const loaded = await repo.load();
     expect(loaded.active).toBe('openrouter');
     expect(loaded.anthropic).toMatchObject({ apiKey: 'sk-ant-abc-1234', model: 'claude-sonnet-5-5' });
@@ -59,8 +62,30 @@ describe('ChromeSettingsRepository', () => {
     const repo = new ChromeSettingsRepository(storage);
     storage.data[SETTINGS_KEY] = { apiKey: 'x', model: 'not-a-model' };
     expect((await repo.load()).anthropic.model).toBe('claude-opus-5-5');
-    storage.data[SETTINGS_KEY] = { version: 2, active: 'openrouter', anthropic: { model: 'claude-opus-5-5' }, openrouter: { model: 'no slash' } };
-    expect((await repo.load()).active).toBe('anthropic');
+    storage.data[SETTINGS_KEY] = {
+      version: 2,
+      active: 'openrouter',
+      anthropic: { apiKey: 'sk-ant-keep-1', model: 'claude-opus-5-5' },
+      openrouter: { apiKey: 'sk-or-1', model: 'no slash' },
+    };
+    const partial = await repo.load();
+    // Only the invalid slot falls back; the other key survives.
+    expect([partial.active, partial.openrouter.model, partial.anthropic.apiKey]).toEqual(['openrouter', 'z-ai/glm-5.3-flash', 'sk-ant-keep-1']);
+  });
+
+  it('upgrades v2 settings, keeping both slots and starting OpenCode and LiteLLM empty', async () => {
+    const storage = new FakeStorage();
+    storage.data[SETTINGS_KEY] = {
+      version: 2,
+      active: 'openrouter',
+      anthropic: { apiKey: 'sk-ant-1', model: 'claude-sonnet-5-5', profile: 'standard' },
+      openrouter: { apiKey: 'sk-or-1', model: 'anthropic/claude-haiku-5.5', profile: 'compact' },
+    };
+    const loaded = await new ChromeSettingsRepository(storage).load();
+    expect(loaded.active).toBe('openrouter');
+    expect([loaded.anthropic.apiKey, loaded.openrouter.apiKey, loaded.openrouter.model]).toEqual(['sk-ant-1', 'sk-or-1', 'anthropic/claude-haiku-5.5']);
+    expect(loaded.opencode).toMatchObject({ apiKey: null, model: 'glm-5.3-flash' });
+    expect(loaded.litellm).toMatchObject({ apiKey: null, baseUrl: 'http://localhost:4000' });
   });
 });
 

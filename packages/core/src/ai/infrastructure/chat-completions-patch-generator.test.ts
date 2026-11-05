@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EditContext, type OutputMode, type ProviderConfig } from '../domain';
-import { OpenRouterPatchGenerator } from './openrouter-patch-generator';
+import { ChatCompletionsPatchGenerator } from './chat-completions-patch-generator';
 
 const config: ProviderConfig = {
   provider: 'openrouter',
   apiKey: 'sk-or-test',
   model: 'z-ai/glm-5.3-flash',
   capabilities: { status: 'found', structuredOutputs: true, tools: true },
+  apiUrl: 'https://openrouter.ai/api/v1',
 };
 const context = EditContext.create({
   html: '<form data-hew-target="t0"></form>',
@@ -25,10 +26,10 @@ function reply(status: number, body: unknown) {
 }
 const completion = (message: Record<string, unknown>, usage?: unknown) => ({ choices: [{ message }], ...(usage ? { usage } : {}) });
 const bodyOf = (fetch: ReturnType<typeof reply>) => JSON.parse(String(fetch.mock.calls[0]![1]!.body));
-const run = (fetch: typeof globalThis.fetch, mode: OutputMode, extra: Partial<Parameters<OpenRouterPatchGenerator['generate']>[0]> = {}) =>
-  new OpenRouterPatchGenerator({ fetch }).generate({ config, context, prompt: 'remove it', mode, ...extra });
+const run = (fetch: typeof globalThis.fetch, mode: OutputMode, extra: Partial<Parameters<ChatCompletionsPatchGenerator['generate']>[0]> = {}) =>
+  new ChatCompletionsPatchGenerator({ fetch }).generate({ config, context, prompt: 'remove it', mode, ...extra });
 
-describe('OpenRouterPatchGenerator', () => {
+describe('ChatCompletionsPatchGenerator', () => {
   it('json_schema mode: strict response_format, require_parameters, auth header, cost', async () => {
     const fetch = reply(200, completion({ content: JSON.stringify(draft) }, { cost: 0.00012 }));
     const result = await run(fetch, 'json_schema');
@@ -113,15 +114,44 @@ describe('OpenRouterPatchGenerator', () => {
           init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
         ),
     );
-    const timeout = await new OpenRouterPatchGenerator({ fetch: hang, timeoutMs: 20 }).generate({ config, context, prompt: 'x', mode: 'json_schema' });
+    const timeout = await new ChatCompletionsPatchGenerator({ fetch: hang, timeoutMs: 20 }).generate({ config, context, prompt: 'x', mode: 'json_schema' });
     expect(!timeout.ok && timeout.error.code).toBe('provider-timeout');
   });
 
   it('ping sends a one-token request and maps failures', async () => {
     const okFetch = reply(200, completion({ content: 'OK' }));
-    expect((await new OpenRouterPatchGenerator({ fetch: okFetch }).ping(config)).ok).toBe(true);
+    expect((await new ChatCompletionsPatchGenerator({ fetch: okFetch }).ping(config)).ok).toBe(true);
     expect(bodyOf(okFetch).max_tokens).toBe(1);
-    const denied = await new OpenRouterPatchGenerator({ fetch: reply(401, {}) }).ping(config);
+    const denied = await new ChatCompletionsPatchGenerator({ fetch: reply(401, {}) }).ping(config);
     expect(!denied.ok && denied.error.code).toBe('provider-auth');
+  });
+
+  it('OpenCode: posts to its API with the key and without OpenRouter-only fields', async () => {
+    const fetch = reply(200, completion({ content: JSON.stringify(draft) }));
+    const opencode: ProviderConfig = { ...config, provider: 'opencode', apiKey: 'sk-oc-1', model: 'glm-5.3-flash', apiUrl: 'https://opencode.ai/inference/openai/v1' };
+    const result = await new ChatCompletionsPatchGenerator({ fetch }).generate({ config: opencode, context, prompt: 'x', mode: 'json_schema' });
+    expect(result.ok && result.value.raw).toEqual(draft);
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('https://opencode.ai/inference/openai/v1/chat/completions');
+    expect(new Headers(init!.headers).get('authorization')).toBe('Bearer sk-oc-1');
+    const body = bodyOf(fetch);
+    expect(body.response_format).toMatchObject({ type: 'json_schema' });
+    expect(body.usage).toBeUndefined();
+    expect(body.provider).toBeUndefined();
+  });
+
+  it('LiteLLM: no Authorization header without a key, and network errors name the proxy', async () => {
+    const litellm: ProviderConfig = { ...config, provider: 'litellm', apiKey: null, model: 'team-gpt', apiUrl: 'http://localhost:4000/v1' };
+    const fetch = reply(200, completion({ content: JSON.stringify(draft) }));
+    await new ChatCompletionsPatchGenerator({ fetch }).generate({ config: litellm, context, prompt: 'x', mode: 'prompted' });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('http://localhost:4000/v1/chat/completions');
+    expect(new Headers(init!.headers).has('authorization')).toBe(false);
+
+    const down = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const result = await new ChatCompletionsPatchGenerator({ fetch: down }).ping(litellm);
+    expect(!result.ok && result.error.message).toContain('is the LiteLLM proxy running at http://localhost:4000?');
   });
 });

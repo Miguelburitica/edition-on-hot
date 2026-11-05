@@ -2,17 +2,21 @@ import { err, ok, type Result } from '../../shared/domain';
 import { CONTEXT_BUDGETS, DEFAULT_CONTEXT_PROFILE, type ContextBudget } from './context-budget';
 import {
   InvalidApiKeyFormatError,
+  InvalidBaseUrlError,
   InvalidModelIdError,
   MissingApiKeyError,
+  MissingModelError,
   UnsupportedModelError,
 } from './errors';
 import {
+  COMPATIBLE_PROVIDER_IDS,
+  COMPATIBLE_PROVIDERS,
   DEFAULT_ANTHROPIC_MODEL,
-  DEFAULT_OPENROUTER_MODEL,
   isAnthropicModelId,
-  isOpenRouterModelId,
+  normalizeBaseUrl,
   PROVIDER_LABELS,
   type AnthropicModelId,
+  type CompatibleProviderId,
   type ContextProfile,
   type ProviderId,
 } from './model';
@@ -24,16 +28,27 @@ export interface AnthropicSlot {
   readonly profile: ContextProfile;
 }
 
-export interface OpenRouterSlot {
+/** A provider reached through the OpenAI-compatible chat completions API. */
+export interface CompatibleSlot {
   readonly apiKey: string | null;
   readonly model: string;
   readonly profile: ContextProfile;
   readonly capabilities: ModelCapabilities;
+  /** For LiteLLM, the proxy origin the user configured; fixed for the other providers. */
+  readonly baseUrl: string;
 }
 
 export type ProviderConfig =
   | { readonly provider: 'anthropic'; readonly apiKey: string; readonly model: AnthropicModelId }
-  | { readonly provider: 'openrouter'; readonly apiKey: string; readonly model: string; readonly capabilities: ModelCapabilities };
+  | {
+      readonly provider: CompatibleProviderId;
+      /** `null` only for providers whose key is optional (LiteLLM). */
+      readonly apiKey: string | null;
+      readonly model: string;
+      readonly capabilities: ModelCapabilities;
+      /** The chat completions API root, e.g. `https://openrouter.ai/api/v1`. */
+      readonly apiUrl: string;
+    };
 
 export interface SlotUpdate {
   /** `undefined` keeps the stored key; `null` clears it. */
@@ -41,45 +56,60 @@ export interface SlotUpdate {
   readonly model?: string;
   readonly profile?: ContextProfile;
   readonly capabilities?: ModelCapabilities;
+  /** Only used by providers with an editable base URL. */
+  readonly baseUrl?: string;
 }
 
-type SettingsError = InvalidApiKeyFormatError | InvalidModelIdError | UnsupportedModelError;
+type SettingsError = InvalidApiKeyFormatError | InvalidModelIdError | UnsupportedModelError | InvalidBaseUrlError;
+type CompatibleSlots = Readonly<Record<CompatibleProviderId, CompatibleSlot>>;
 
 /** The user's bring-your-own-key settings: one slot per provider, one of them active. */
 export class ProviderSettings {
   private constructor(
     readonly active: ProviderId,
     readonly anthropic: AnthropicSlot,
-    readonly openrouter: OpenRouterSlot,
+    private readonly compatible: CompatibleSlots,
   ) {}
 
   static empty(): ProviderSettings {
+    const compatible = Object.fromEntries(
+      COMPATIBLE_PROVIDER_IDS.map((id) => [id, emptyCompatibleSlot(id)]),
+    ) as Record<CompatibleProviderId, CompatibleSlot>;
     return new ProviderSettings(
       'anthropic',
       { apiKey: null, model: DEFAULT_ANTHROPIC_MODEL, profile: DEFAULT_CONTEXT_PROFILE.anthropic },
-      {
-        apiKey: null,
-        model: DEFAULT_OPENROUTER_MODEL,
-        profile: DEFAULT_CONTEXT_PROFILE.openrouter,
-        capabilities: UNKNOWN_CAPABILITIES,
-      },
+      compatible,
     );
   }
 
-  /** Rebuilds settings from stored values, validating every field. */
-  static restore(props: {
-    active: ProviderId;
-    anthropic: SlotUpdate;
-    openrouter: SlotUpdate;
-  }): Result<ProviderSettings, SettingsError> {
-    const withAnthropic = ProviderSettings.empty().update('anthropic', props.anthropic);
-    if (!withAnthropic.ok) return withAnthropic;
-    const withBoth = withAnthropic.value.update('openrouter', props.openrouter);
-    if (!withBoth.ok) return withBoth;
-    return ok(withBoth.value.activate(props.active));
+  /** Rebuilds settings from stored values, validating every field. Missing slots start empty. */
+  static restore(
+    props: { active: ProviderId } & Partial<Record<ProviderId, SlotUpdate>>,
+  ): Result<ProviderSettings, SettingsError> {
+    let settings = ProviderSettings.empty();
+    for (const provider of ['anthropic', ...COMPATIBLE_PROVIDER_IDS] as const) {
+      const change = props[provider];
+      if (!change) continue;
+      const next = settings.update(provider, change);
+      if (!next.ok) return next;
+      settings = next.value;
+    }
+    return ok(settings.activate(props.active));
   }
 
-  /** Updates one provider's slot without touching the other provider's key. */
+  get openrouter(): CompatibleSlot {
+    return this.compatible.openrouter;
+  }
+
+  get opencode(): CompatibleSlot {
+    return this.compatible.opencode;
+  }
+
+  get litellm(): CompatibleSlot {
+    return this.compatible.litellm;
+  }
+
+  /** Updates one provider's slot without touching the other providers' keys. */
   update(provider: ProviderId, change: SlotUpdate): Result<ProviderSettings, SettingsError> {
     const apiKey = change.apiKey === undefined ? this.slot(provider).apiKey : normalizeKey(change.apiKey);
     if (apiKey instanceof InvalidApiKeyFormatError) return err(apiKey);
@@ -91,26 +121,37 @@ export class ProviderSettings {
         new ProviderSettings(
           this.active,
           { apiKey, model, profile: change.profile ?? this.anthropic.profile },
-          this.openrouter,
+          this.compatible,
         ),
       );
     }
 
-    const model = (change.model ?? this.openrouter.model).trim();
-    if (!isOpenRouterModelId(model)) return err(new InvalidModelIdError(model));
-    const modelChanged = model !== this.openrouter.model;
-    return ok(
-      new ProviderSettings(this.active, this.anthropic, {
-        apiKey,
-        model,
-        profile: change.profile ?? this.openrouter.profile,
-        capabilities: change.capabilities ?? (modelChanged ? UNKNOWN_CAPABILITIES : this.openrouter.capabilities),
-      }),
-    );
+    const spec = COMPATIBLE_PROVIDERS[provider];
+    const current = this.compatible[provider];
+    const model = (change.model ?? current.model).trim();
+    // An empty model is allowed only while unset (a fresh LiteLLM slot); saving one is rejected upstream.
+    if (model !== '' && !spec.isModelId(model)) {
+      return err(new InvalidModelIdError(model, spec.modelIdHint, PROVIDER_LABELS[provider]));
+    }
+    let baseUrl = current.baseUrl;
+    if (spec.baseUrlEditable && change.baseUrl !== undefined) {
+      const normalized = normalizeBaseUrl(change.baseUrl);
+      if (!normalized) return err(new InvalidBaseUrlError(change.baseUrl));
+      baseUrl = normalized;
+    }
+    const modelChanged = model !== current.model || baseUrl !== current.baseUrl;
+    const slot: CompatibleSlot = {
+      apiKey,
+      model,
+      profile: change.profile ?? current.profile,
+      capabilities: change.capabilities ?? (modelChanged ? UNKNOWN_CAPABILITIES : current.capabilities),
+      baseUrl,
+    };
+    return ok(new ProviderSettings(this.active, this.anthropic, { ...this.compatible, [provider]: slot }));
   }
 
   activate(provider: ProviderId): ProviderSettings {
-    return new ProviderSettings(provider, this.anthropic, this.openrouter);
+    return new ProviderSettings(provider, this.anthropic, this.compatible);
   }
 
   withoutKey(provider: ProviderId = this.active): ProviderSettings {
@@ -119,8 +160,11 @@ export class ProviderSettings {
     return cleared.value;
   }
 
-  slot(provider: ProviderId): AnthropicSlot | OpenRouterSlot {
-    return provider === 'anthropic' ? this.anthropic : this.openrouter;
+  slot(provider: 'anthropic'): AnthropicSlot;
+  slot(provider: CompatibleProviderId): CompatibleSlot;
+  slot(provider: ProviderId): AnthropicSlot | CompatibleSlot;
+  slot(provider: ProviderId): AnthropicSlot | CompatibleSlot {
+    return provider === 'anthropic' ? this.anthropic : this.compatible[provider];
   }
 
   hasKey(provider: ProviderId = this.active): boolean {
@@ -137,16 +181,35 @@ export class ProviderSettings {
     return CONTEXT_BUDGETS[this.slot(this.active).profile];
   }
 
-  toConfig(): Result<ProviderConfig, MissingApiKeyError> {
-    if (this.active === 'anthropic') {
+  toConfig(): Result<ProviderConfig, MissingApiKeyError | MissingModelError> {
+    const provider = this.active;
+    const label = PROVIDER_LABELS[provider];
+    if (provider === 'anthropic') {
       const { apiKey, model } = this.anthropic;
-      return apiKey ? ok({ provider: 'anthropic', apiKey, model }) : err(new MissingApiKeyError(PROVIDER_LABELS.anthropic));
+      return apiKey ? ok({ provider, apiKey, model }) : err(new MissingApiKeyError(label));
     }
-    const { apiKey, model, capabilities } = this.openrouter;
-    return apiKey
-      ? ok({ provider: 'openrouter', apiKey, model, capabilities })
-      : err(new MissingApiKeyError(PROVIDER_LABELS.openrouter));
+    const spec = COMPATIBLE_PROVIDERS[provider];
+    const { apiKey, model, capabilities } = this.compatible[provider];
+    if (spec.keyRequired && !apiKey) return err(new MissingApiKeyError(label));
+    if (model === '') return err(new MissingModelError(label));
+    return ok({ provider, apiKey, model, capabilities, apiUrl: apiUrlOf(provider, this.compatible[provider].baseUrl) });
   }
+}
+
+/** The chat completions API root for a provider: LiteLLM serves it under `<proxy>/v1`. */
+export function apiUrlOf(provider: CompatibleProviderId, baseUrl: string): string {
+  return COMPATIBLE_PROVIDERS[provider].baseUrlEditable ? `${baseUrl}/v1` : baseUrl;
+}
+
+function emptyCompatibleSlot(provider: CompatibleProviderId): CompatibleSlot {
+  const spec = COMPATIBLE_PROVIDERS[provider];
+  return {
+    apiKey: null,
+    model: spec.defaultModel,
+    profile: DEFAULT_CONTEXT_PROFILE[provider],
+    capabilities: UNKNOWN_CAPABILITIES,
+    baseUrl: spec.defaultBaseUrl,
+  };
 }
 
 function normalizeKey(raw: string | null): string | null | InvalidApiKeyFormatError {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type {
   ClearApiKey,
+  CompatibleProviderId,
   ContextProfile,
   GetProviderSettings,
   LookupModel,
@@ -22,16 +23,43 @@ export interface OptionsUseCases {
 
 type Status = { kind: 'ok' | 'error'; message: string } | null;
 
-const PROVIDERS: readonly { id: ProviderId; label: string }[] = [
-  { id: 'anthropic', label: 'Anthropic' },
-  { id: 'openrouter', label: 'OpenRouter' },
-];
+const PROVIDERS: readonly ProviderId[] = ['anthropic', 'openrouter', 'opencode', 'litellm'];
 
-export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
+const CATALOG_SOURCE: Record<CompatibleProviderId, string> = {
+  openrouter: 'OpenRouter catalog',
+  opencode: 'OpenCode catalog',
+  litellm: 'LiteLLM proxy',
+};
+
+const KEY_PLACEHOLDER: Record<ProviderId, string> = {
+  anthropic: 'sk-ant-…',
+  openrouter: 'sk-or-…',
+  opencode: 'sk-…',
+  litellm: 'sk-… (only if your proxy requires one)',
+};
+
+/** `http://localhost:4000` for a URL the user typed, or null when it does not parse. */
+function originOf(url: string): string | null {
+  try {
+    const parsed = new URL(url.trim());
+    return /^https?:$/.test(parsed.protocol) ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface OptionsAppProps {
+  readonly useCases: OptionsUseCases;
+  /** Asks the browser for access to a user-configured host. Called first thing in the Save click. */
+  readonly requestHostAccess: (origin: string) => Promise<boolean>;
+}
+
+export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
   const [view, setView] = useState<ProviderSettingsView | null>(null);
   const [provider, setProvider] = useState<ProviderId>('anthropic');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [profile, setProfile] = useState<ContextProfile>('standard');
   const [capabilities, setCapabilities] = useState<ModelCapabilities | null>(null);
   const [status, setStatus] = useState<Status>(null);
@@ -42,7 +70,8 @@ export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
     setApiKey('');
     setModel(v[next].model);
     setProfile(v[next].profile);
-    setCapabilities(next === 'openrouter' ? v.openrouter.capabilities : null);
+    setBaseUrl(next === 'anthropic' ? '' : v[next].baseUrl);
+    setCapabilities(next === 'anthropic' ? null : v[next].capabilities);
   };
 
   useEffect(() => {
@@ -52,20 +81,39 @@ export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
     });
   }, [useCases]);
 
-  // Look the OpenRouter model up in the public catalog while the user types.
+  // Look the model up in the provider's catalog (or the LiteLLM proxy) while the user types.
   useEffect(() => {
-    if (provider !== 'openrouter' || !view || model.trim() === '') return;
-    const timer = setTimeout(() => void useCases.lookup.execute(model).then(setCapabilities), 400);
+    if (provider === 'anthropic' || !view || model.trim() === '') return;
+    const editable = view[provider].baseUrlEditable;
+    const timer = setTimeout(
+      () => void useCases.lookup.execute({ provider, model, ...(editable ? { baseUrl } : {}) }).then(setCapabilities),
+      400,
+    );
     return () => clearTimeout(timer);
-  }, [provider, model, useCases, view]);
+  }, [provider, model, baseUrl, useCases, view]);
 
   if (!view) return null;
   const slot = view[provider];
+  const compatible = provider === 'anthropic' ? null : view[provider];
   const isActive = view.active === provider;
-  const label = PROVIDERS.find((p) => p.id === provider)!.label;
+  const label = slot.label;
 
   const save = async () => {
-    const result = await useCases.save.execute({ provider, model, profile, ...(apiKey.trim() ? { apiKey } : {}) });
+    // A user-configured host needs browser access; the request must start inside the click.
+    if (compatible?.baseUrlEditable) {
+      const origin = originOf(baseUrl);
+      if (origin && !(await requestHostAccess(origin))) {
+        setStatus({ kind: 'error', message: `Chrome access to ${origin} is needed to reach your ${label} proxy. Nothing was saved.` });
+        return;
+      }
+    }
+    const result = await useCases.save.execute({
+      provider,
+      model,
+      profile,
+      ...(apiKey.trim() ? { apiKey } : {}),
+      ...(compatible?.baseUrlEditable ? { baseUrl } : {}),
+    });
     if (result.ok) {
       setView(result.value);
       showProvider(provider, result.value);
@@ -77,7 +125,7 @@ export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
     setTesting(true);
     const result = await useCases.test.execute();
     setTesting(false);
-    setStatus(result.ok ? { kind: 'ok', message: 'The key works.' } : { kind: 'error', message: result.error.message });
+    setStatus(result.ok ? { kind: 'ok', message: compatible?.keyRequired === false ? 'The connection works.' : 'The key works.' } : { kind: 'error', message: result.error.message });
   };
 
   const clear = async () => {
@@ -95,29 +143,47 @@ export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
       </p>
 
       <fieldset className="row" style={{ border: 'none', padding: 0, margin: 0 }} aria-label="Provider">
-        {PROVIDERS.map((p) => (
+        {PROVIDERS.map((id) => (
           <button
-            key={p.id}
-            className={p.id === provider ? 'primary' : undefined}
-            aria-pressed={p.id === provider}
+            key={id}
+            className={id === provider ? 'primary' : undefined}
+            aria-pressed={id === provider}
             onClick={() => {
               setStatus(null);
-              showProvider(p.id, view);
+              showProvider(id, view);
             }}
           >
-            {p.label}
-            {view.active === p.id ? ' (active)' : ''}
+            {view[id].label}
+            {view.active === id ? ' (active)' : ''}
           </button>
         ))}
       </fieldset>
 
+      {compatible?.baseUrlEditable && (
+        <label className="stack" style={{ gap: 4 }}>
+          <span>{label} proxy URL</span>
+          <input
+            name="baseUrl"
+            type="url"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="http://localhost:4000"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+          <span className="muted">Saving asks Chrome for access to this host only.</span>
+        </label>
+      )}
+
       <label className="stack" style={{ gap: 4 }}>
-        <span>{label} API key</span>
+        <span>
+          {label} API key{compatible && !compatible.keyRequired ? ' (optional)' : ''}
+        </span>
         <input
           type="password"
           autoComplete="off"
           name="apiKey"
-          placeholder={slot.maskedKey ?? (provider === 'anthropic' ? 'sk-ant-…' : 'sk-or-…')}
+          placeholder={slot.maskedKey ?? KEY_PLACEHOLDER[provider]}
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
         />
@@ -137,23 +203,24 @@ export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
         </label>
       ) : (
         <label className="stack" style={{ gap: 4 }}>
-          <span>OpenRouter model</span>
+          <span>{label} model</span>
           <input
             name="model"
-            list="openrouter-models"
+            list={`${provider}-models`}
             autoComplete="off"
             spellCheck={false}
+            placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : undefined}
             value={model}
             onChange={(e) => setModel(e.target.value)}
           />
-          <datalist id="openrouter-models">
-            {view.openrouter.suggestions.map((s) => (
+          <datalist id={`${provider}-models`}>
+            {compatible!.suggestions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
             ))}
           </datalist>
-          {capabilities && <CapabilityStatus capabilities={capabilities} />}
+          {capabilities && model.trim() !== '' && <CapabilityStatus capabilities={capabilities} source={CATALOG_SOURCE[provider]} />}
         </label>
       )}
 
@@ -169,8 +236,8 @@ export function OptionsApp({ useCases }: { useCases: OptionsUseCases }) {
         <button className="primary" onClick={() => void save()}>
           {isActive ? 'Save' : `Save and use ${label}`}
         </button>
-        <button disabled={!isActive || !slot.hasKey || testing} onClick={() => void test()}>
-          {testing ? 'Testing…' : 'Test key'}
+        <button disabled={!isActive || (!slot.hasKey && compatible?.keyRequired !== false) || testing} onClick={() => void test()}>
+          {testing ? 'Testing…' : compatible?.keyRequired === false ? 'Test connection' : 'Test key'}
         </button>
         <button disabled={!slot.hasKey} onClick={() => void clear()}>
           Clear key
