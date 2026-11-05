@@ -1,5 +1,6 @@
 import { err, ok, type Result } from '../../shared/domain';
 import {
+  OPENROUTER_BASE_URL,
   ProviderError,
   type GeneratorOutput,
   type OutputMode,
@@ -11,9 +12,9 @@ import {
 import { APPLY_PATCH_TOOL_NAME, strictApplyPatchJsonSchema } from './patch-schema';
 import { buildSystemPrompt, buildUserMessage } from './prompt-builder';
 
-export const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1';
+export const OPENROUTER_API_URL = OPENROUTER_BASE_URL;
 
-export interface OpenRouterGeneratorOptions {
+export interface ChatCompletionsGeneratorOptions {
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
 }
@@ -34,32 +35,38 @@ const STATUS_KINDS: Record<number, ProviderFailureKind> = {
   503: 'no-provider',
 };
 
+type CompatibleConfig = Extract<ProviderConfig, { apiUrl: string }>;
+
 /**
- * PatchGenerator for OpenRouter's OpenAI-compatible chat completions API. The request shape
- * depends on the output mode; the raw JSON goes back unparsed so the application can repair it.
+ * PatchGenerator for OpenAI-compatible chat completions APIs: OpenRouter, OpenCode and LiteLLM.
+ * The URL and key come from the config; the request shape depends on the output mode. The raw JSON
+ * goes back unparsed so the application can repair it.
  */
-export class OpenRouterPatchGenerator implements PatchGenerator {
+export class ChatCompletionsPatchGenerator implements PatchGenerator {
   private readonly fetch: typeof fetch;
 
-  constructor(private readonly options: OpenRouterGeneratorOptions = {}) {
+  constructor(private readonly options: ChatCompletionsGeneratorOptions = {}) {
     this.fetch = options.fetch ?? ((...args) => globalThis.fetch(...args));
   }
 
   async generate(request: PatchGenerationRequest): Promise<Result<GeneratorOutput, ProviderError>> {
     const { config, mode } = request;
-    if (config.provider !== 'openrouter') return err(new ProviderError('unknown', 'wrong provider for this adapter'));
+    if (config.provider === 'anthropic') return err(new ProviderError('unknown', 'wrong provider for this adapter'));
     const started = Date.now();
+    const openRouter = config.provider === 'openrouter';
     const body = {
       model: config.model,
       max_tokens: 4096,
-      usage: { include: true },
+      // OpenRouter-only: report the cost, and route only to hosts that honour the output format.
+      ...(openRouter ? { usage: { include: true } } : {}),
       messages: [
         { role: 'system', content: buildSystemPrompt(mode, 'pairs') },
         { role: 'user', content: buildUserMessage(request.context, request.prompt, request.previousIssues) },
       ],
       ...modeParameters(mode),
+      ...(openRouter && mode !== 'prompted' ? { provider: { require_parameters: true } } : {}),
     };
-    const response = await this.post(config.apiKey, body);
+    const response = await this.post(config, body);
     if (!response.ok) return response;
     const completion = response.value;
     return ok({
@@ -72,8 +79,8 @@ export class OpenRouterPatchGenerator implements PatchGenerator {
   }
 
   async ping(config: ProviderConfig): Promise<Result<void, ProviderError>> {
-    if (config.provider !== 'openrouter') return err(new ProviderError('unknown', 'wrong provider for this adapter'));
-    const response = await this.post(config.apiKey, {
+    if (config.provider === 'anthropic') return err(new ProviderError('unknown', 'wrong provider for this adapter'));
+    const response = await this.post(config, {
       model: config.model,
       max_tokens: 1,
       messages: [{ role: 'user', content: 'Reply with OK.' }],
@@ -81,13 +88,16 @@ export class OpenRouterPatchGenerator implements PatchGenerator {
     return response.ok ? ok(undefined) : response;
   }
 
-  private async post(apiKey: string, body: unknown): Promise<Result<ChatCompletion, ProviderError>> {
+  private async post(config: CompatibleConfig, body: unknown): Promise<Result<ChatCompletion, ProviderError>> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 60_000);
     try {
-      const res = await this.fetch(`${OPENROUTER_API_URL}/chat/completions`, {
+      const res = await this.fetch(`${config.apiUrl}/chat/completions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        headers: {
+          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -98,6 +108,9 @@ export class OpenRouterPatchGenerator implements PatchGenerator {
       return ok(json);
     } catch (error) {
       if (controller.signal.aborted) return err(new ProviderError('timeout'));
+      if (config.provider === 'litellm') {
+        return err(new ProviderError('network', `is the LiteLLM proxy running at ${config.apiUrl.replace(/\/v1$/, '')}?`));
+      }
       return err(new ProviderError('network', error instanceof Error ? error.message : undefined));
     } finally {
       clearTimeout(timer);
@@ -113,7 +126,6 @@ function modeParameters(mode: OutputMode): Record<string, unknown> {
           type: 'json_schema',
           json_schema: { name: APPLY_PATCH_TOOL_NAME, strict: true, schema: strictApplyPatchJsonSchema() },
         },
-        provider: { require_parameters: true },
       };
     case 'tool':
       return {
@@ -128,7 +140,6 @@ function modeParameters(mode: OutputMode): Record<string, unknown> {
           },
         ],
         tool_choice: { type: 'function', function: { name: APPLY_PATCH_TOOL_NAME } },
-        provider: { require_parameters: true },
       };
     case 'prompted':
       return {};

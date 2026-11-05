@@ -1,7 +1,7 @@
 import type { Result } from '../../shared/domain';
 import type { EditContext } from './edit-context';
 import type { CatalogUnavailableError, InvalidProposalError, ProviderError } from './errors';
-import type { ProviderId } from './model';
+import type { CompatibleProviderId, ProviderId } from './model';
 import type { ModelCapabilities } from './model-capabilities';
 import type { OutputMode } from './output-mode';
 import type { ProposalDraft } from './patch-proposal';
@@ -40,8 +40,18 @@ export interface ProposalParser {
   parse(raw: unknown, provider: ProviderId): Result<ProposalDraft, InvalidProposalError>;
 }
 
+/** What a catalog needs to look a model up: LiteLLM's catalog is the user's own proxy. */
+export interface CatalogQuery {
+  readonly provider: CompatibleProviderId;
+  readonly model: string;
+  /** The provider's chat completions API root (see `apiUrlOf`). */
+  readonly apiUrl: string;
+  /** Sent only to catalogs that need it (the LiteLLM proxy). */
+  readonly apiKey: string | null;
+}
+
 export interface ModelCatalog {
-  lookup(modelId: string): Promise<Result<ModelCapabilities, CatalogUnavailableError>>;
+  lookup(query: CatalogQuery): Promise<Result<ModelCapabilities, CatalogUnavailableError>>;
 }
 
 export interface ProviderSettingsRepository {

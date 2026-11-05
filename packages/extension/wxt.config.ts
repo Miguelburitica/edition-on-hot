@@ -12,7 +12,9 @@ export default defineConfig({
     name: 'Hot Edit Web',
     description: 'Select part of any page, describe a change, and preview it live.',
     permissions: ['storage', 'sidePanel'],
-    host_permissions: ['https://api.anthropic.com/*', 'https://openrouter.ai/*'],
+    host_permissions: ['https://api.anthropic.com/*', 'https://openrouter.ai/*', 'https://opencode.ai/*'],
+    // A LiteLLM proxy can live anywhere: access to its exact origin is requested when it is saved.
+    optional_host_permissions: ['http://*/*', 'https://*/*'],
     action: { default_title: 'Open Hot Edit Web' },
   },
 });

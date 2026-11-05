@@ -178,6 +178,47 @@ test('OpenRouter: model ids are validated and checked against the catalog', asyn
   await expect(options.getByRole('status')).toHaveText('Settings saved. OpenRouter is the active provider.');
 });
 
+test('OpenCode: the model is checked against its catalog and the edit loop runs with it active', async ({ context, extensionId }) => {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  await options.getByRole('button', { name: /^OpenCode/ }).click();
+  await expect(options.getByLabel('OpenCode model')).toHaveValue('glm-5.3-flash');
+  await expect(options.getByTestId('model-status')).toHaveText(/Found in the OpenCode catalog · supports structured outputs and tools/);
+  await options.getByLabel('OpenCode API key').fill('sk-oc-e2e-placeholder-7777');
+  await options.getByRole('button', { name: /^Save/ }).click();
+  await expect(options.getByRole('status')).toHaveText('Settings saved. OpenCode is the active provider.');
+  await options.close();
+
+  const { app, panel } = await openEditor(context, extensionId);
+  await selectSignupCard(app, panel);
+  await panel.getByRole('textbox').fill('Add a red notification banner above this form');
+  await panel.getByRole('button', { name: 'Apply' }).click();
+  await expect(app.locator('.hew-e2e-banner')).toHaveCount(1);
+});
+
+test('LiteLLM: a proxy URL and model without a key are saved and survive a reload', async ({ context, extensionId }) => {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  await options.getByRole('button', { name: /^LiteLLM/ }).click();
+  await expect(options.getByLabel('LiteLLM proxy URL')).toHaveValue('http://localhost:4000');
+  await expect(options.getByLabel('LiteLLM API key (optional)')).toBeVisible();
+
+  await options.getByRole('button', { name: /^Save/ }).click();
+  await expect(options.getByRole('status')).toContainText('Set the LiteLLM model');
+
+  await options.getByLabel('LiteLLM proxy URL').fill('https://llm.example.com/v1/');
+  await options.getByLabel('LiteLLM model').fill('team-gpt');
+  await expect(options.getByTestId('model-status')).toContainText('Found in the LiteLLM proxy');
+  await options.getByRole('button', { name: /^Save/ }).click();
+  await expect(options.getByRole('status')).toHaveText('Settings saved. LiteLLM is the active provider.');
+
+  await options.reload();
+  await expect(options.getByRole('button', { name: 'LiteLLM (active)' })).toBeVisible();
+  await expect(options.getByLabel('LiteLLM proxy URL')).toHaveValue('https://llm.example.com');
+  await expect(options.getByLabel('LiteLLM model')).toHaveValue('team-gpt');
+  await expect(options.getByRole('button', { name: 'Test connection' })).toBeEnabled();
+});
+
 test('provider errors are explained in the side panel', async ({ context, extensionId }) => {
   await (await saveOpenRouter(context, extensionId)).close();
   const { app, panel } = await openEditor(context, extensionId);

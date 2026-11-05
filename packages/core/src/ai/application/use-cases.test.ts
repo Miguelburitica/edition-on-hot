@@ -198,6 +198,41 @@ describe('settings use cases', () => {
     expect(result.ok && result.value.openrouter.capabilities.status).toBe('unknown');
   });
 
+  it('saves LiteLLM with a proxy URL and no key, looking the model up on that proxy', async () => {
+    const repo = new MemorySettings();
+    const found = catalog(ok({ status: 'found', structuredOutputs: false, tools: true }));
+    const result = await new SaveProviderSettings(repo, found).execute({ provider: 'litellm', model: 'team-gpt', baseUrl: 'https://llm.example.com/' });
+    expect(result.ok && result.value).toMatchObject({
+      active: 'litellm',
+      litellm: { hasKey: false, keyRequired: false, baseUrlEditable: true, baseUrl: 'https://llm.example.com', capabilities: { tools: true } },
+    });
+    expect(found.lookup).toHaveBeenCalledWith({ provider: 'litellm', model: 'team-gpt', apiUrl: 'https://llm.example.com/v1', apiKey: null });
+    expect(repo.value.toConfig()).toMatchObject({ ok: true, value: { provider: 'litellm', apiKey: null } });
+  });
+
+  it('rejects LiteLLM without a model or with a bad URL, and keeps OpenCode on its fixed API', async () => {
+    const none = catalog(err(new CatalogUnavailableError()));
+    const noModel = await new SaveProviderSettings(new MemorySettings(), none).execute({ provider: 'litellm', model: ' ' });
+    expect(!noModel.ok && noModel.error.code).toBe('missing-model');
+    const badUrl = await new SaveProviderSettings(new MemorySettings(), none).execute({ provider: 'litellm', model: 'm', baseUrl: 'localhost' });
+    expect(!badUrl.ok && badUrl.error.code).toBe('invalid-base-url');
+    const found = catalog(ok({ status: 'found', structuredOutputs: true, tools: true }));
+    const oc = await new SaveProviderSettings(new MemorySettings(), found).execute({ provider: 'opencode', apiKey: 'sk-oc-1', model: 'glm-5.3-flash' });
+    expect(oc.ok && oc.value.opencode).toMatchObject({ keyRequired: true, baseUrlEditable: false, profile: 'compact' });
+    expect(found.lookup).toHaveBeenCalledWith(expect.objectContaining({ provider: 'opencode', apiUrl: 'https://opencode.ai/inference/openai/v1' }));
+  });
+
+  it('LookupModel uses the URL being edited and the saved LiteLLM key', async () => {
+    const repo = new MemorySettings();
+    const saved = repo.value.update('litellm', { apiKey: 'sk-lite-1', model: 'm' });
+    if (!saved.ok) throw saved.error;
+    await repo.save(saved.value);
+    const found = catalog(ok({ status: 'found', structuredOutputs: false, tools: false }));
+    await new LookupModel(found, repo).execute({ provider: 'litellm', model: 'other', baseUrl: 'http://127.0.0.1:4001' });
+    expect(found.lookup).toHaveBeenCalledWith({ provider: 'litellm', model: 'other', apiUrl: 'http://127.0.0.1:4001/v1', apiKey: 'sk-lite-1' });
+    expect((await new LookupModel(found).execute({ provider: 'litellm', model: '' })).status).toBe('unknown');
+  });
+
   it('rejects unknown providers', async () => {
     const result = await new SaveProviderSettings(new MemorySettings(), catalog(err(new CatalogUnavailableError()))).execute({
       provider: 'openai',
@@ -207,7 +242,7 @@ describe('settings use cases', () => {
   });
 
   it('LookupModel falls back to unknown and GetContextBudget follows the profile', async () => {
-    expect((await new LookupModel(catalog(err(new CatalogUnavailableError()))).execute('a/b')).status).toBe('unknown');
+    expect((await new LookupModel(catalog(err(new CatalogUnavailableError()))).execute({ provider: 'openrouter', model: 'a/b' })).status).toBe('unknown');
     expect(await new GetContextBudget(openRouterKey()).execute()).toEqual(CONTEXT_BUDGETS.compact);
     expect(await new GetContextBudget(anthropicKey()).execute()).toEqual(CONTEXT_BUDGETS.standard);
   });

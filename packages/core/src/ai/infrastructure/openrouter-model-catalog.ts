@@ -1,6 +1,12 @@
 import { err, ok, type Result } from '../../shared/domain';
-import { CatalogUnavailableError, NOT_FOUND_CAPABILITIES, type ModelCapabilities, type ModelCatalog } from '../domain';
-import { OPENROUTER_API_URL } from './openrouter-patch-generator';
+import {
+  CatalogUnavailableError,
+  NOT_FOUND_CAPABILITIES,
+  OPENROUTER_BASE_URL,
+  type CatalogQuery,
+  type ModelCapabilities,
+  type ModelCatalog,
+} from '../domain';
 
 interface CatalogModel {
   id: string;
@@ -25,10 +31,10 @@ export class OpenRouterModelCatalog implements ModelCatalog {
     this.now = options.now ?? Date.now;
   }
 
-  async lookup(modelId: string): Promise<Result<ModelCapabilities, CatalogUnavailableError>> {
+  async lookup(query: CatalogQuery): Promise<Result<ModelCapabilities, CatalogUnavailableError>> {
     const models = await this.models();
     if (!models) return err(new CatalogUnavailableError());
-    const model = models.get(modelId);
+    const model = models.get(query.model);
     if (!model) return ok(NOT_FOUND_CAPABILITIES);
     const params = new Set(model.supported_parameters ?? []);
     return ok({
@@ -43,7 +49,7 @@ export class OpenRouterModelCatalog implements ModelCatalog {
     const ttl = this.options.ttlMs ?? 10 * 60_000;
     if (this.cache && this.now() - this.cache.at < ttl) return this.cache.models;
     try {
-      const res = await this.fetch(`${OPENROUTER_API_URL}/models`, { method: 'GET' });
+      const res = await this.fetch(`${OPENROUTER_BASE_URL}/models`, { method: 'GET' });
       if (!res.ok) return null;
       const json = (await res.json()) as { data?: CatalogModel[] };
       const models = new Map((json.data ?? []).map((m) => [m.id, m]));

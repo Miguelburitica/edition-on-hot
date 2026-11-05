@@ -6,7 +6,7 @@ import { CASES, type EvalCase } from './cases';
 import { isReddish } from './checks';
 import { loadFixture } from './harness';
 import { formatInconsistent, formatTable, summarize } from './report';
-import { requireKey, runEval } from './run';
+import { requireKey, requireProviderEnv, runEval } from './run';
 
 const parser = new PatchGeneratorRouter({});
 const answering = (raw: unknown, costUsd?: number): PatchGenerator => ({
@@ -163,6 +163,57 @@ describe('repeat', () => {
     expect(table.split('\n')[0]).toMatch(/^model\s+cases\s+first-try valid/);
     expect(table).toMatch(/100%\s+1\.2s/);
     expect(table).not.toContain('–');
+  });
+});
+
+describe('runEval on OpenCode and LiteLLM', () => {
+  const bannerCase = CASES.find((c) => c.id === 'banner-above-form')!;
+
+  it('runs OpenCode with its catalog capabilities and labels rows by provider', async () => {
+    const generator = answering(bannerCase.reference);
+    const lookup = vi.fn(async () => ok({ status: 'found' as const, structuredOutputs: true, tools: true }));
+    const results = await runEval({
+      provider: 'opencode',
+      models: ['glm-5.3-flash'],
+      cases: [bannerCase],
+      apiKey: 'sk-oc-1',
+      generatorFor: () => generator,
+      parser,
+      catalog: { lookup },
+    });
+    expect(results[0]).toMatchObject({ provider: 'opencode', model: 'glm-5.3-flash', passed: true });
+    expect(lookup).toHaveBeenCalledWith({ provider: 'opencode', model: 'glm-5.3-flash', apiUrl: 'https://opencode.ai/inference/openai/v1', apiKey: 'sk-oc-1' });
+    expect(vi.mocked(generator.generate).mock.calls[0]![0]).toMatchObject({ mode: 'json_schema', config: { apiUrl: 'https://opencode.ai/inference/openai/v1' } });
+    expect(formatTable(summarize(results))).toContain('opencode:glm-5.3-flash');
+  });
+
+  it('runs LiteLLM against the configured proxy without a key', async () => {
+    const generator = answering(bannerCase.reference);
+    await runEval({
+      provider: 'litellm',
+      models: ['team-gpt'],
+      cases: [bannerCase],
+      apiKey: null,
+      baseUrl: 'http://localhost:4000',
+      generatorFor: () => generator,
+      parser,
+      catalog: null,
+    });
+    expect(vi.mocked(generator.generate).mock.calls[0]![0]).toMatchObject({
+      mode: 'prompted',
+      config: { provider: 'litellm', apiKey: null, apiUrl: 'http://localhost:4000/v1' },
+    });
+  });
+});
+
+describe('requireProviderEnv', () => {
+  it('needs an OpenCode key, and a LiteLLM proxy URL with an optional key', () => {
+    const opencode = requireProviderEnv('opencode', {});
+    expect(!opencode.ok && opencode.error).toContain('Set OPENCODE_API_KEY');
+    expect(requireProviderEnv('opencode', { OPENCODE_API_KEY: 'sk-oc-1' })).toEqual(ok({ apiKey: 'sk-oc-1' }));
+    const litellm = requireProviderEnv('litellm', { LITELLM_API_KEY: 'k' });
+    expect(!litellm.ok && litellm.error).toContain('Set LITELLM_BASE_URL');
+    expect(requireProviderEnv('litellm', { LITELLM_BASE_URL: 'http://localhost:4000' })).toEqual(ok({ apiKey: null, baseUrl: 'http://localhost:4000' }));
   });
 });
 

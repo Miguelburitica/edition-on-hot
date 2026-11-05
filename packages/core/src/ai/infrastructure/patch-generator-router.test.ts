@@ -14,6 +14,7 @@ const openrouter: ProviderConfig = {
   apiKey: 'k',
   model: 'a/b',
   capabilities: { status: 'unknown', structuredOutputs: false, tools: false },
+  apiUrl: 'https://openrouter.ai/api/v1',
 };
 
 describe('PatchGeneratorRouter', () => {

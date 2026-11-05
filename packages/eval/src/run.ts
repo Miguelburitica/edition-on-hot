@@ -1,4 +1,4 @@
-import { ProviderSettings, type ModelCatalog, type PatchGenerator, type ProposalParser, type ProviderId } from '@hew/core/ai/domain';
+import { apiUrlOf, ProviderSettings, type ModelCatalog, type PatchGenerator, type ProposalParser, type ProviderId } from '@hew/core/ai/domain';
 import { err, ok, type Result } from '@hew/core/shared/domain';
 import type { EvalCase } from './cases';
 import { runCase, type CaseResult } from './harness';
@@ -7,13 +7,21 @@ import { runCase, type CaseResult } from './harness';
 export const KEY_VARIABLES: Record<ProviderId, readonly string[]> = {
   anthropic: ['ANTHROPIC_API_KEY'],
   openrouter: ['OPENROUTER_API_KEY', 'OPEN_ROUTER_KEY'],
+  opencode: ['OPENCODE_API_KEY'],
+  litellm: ['LITELLM_API_KEY'],
 };
+
+/** LiteLLM's proxy URL; the other providers have fixed endpoints. */
+export const LITELLM_BASE_URL_VARIABLE = 'LITELLM_BASE_URL';
 
 export interface EvalOptions {
   readonly provider: ProviderId;
   readonly models: readonly string[];
   readonly cases: readonly EvalCase[];
-  readonly apiKey: string;
+  /** `null` only for LiteLLM proxies without auth. */
+  readonly apiKey: string | null;
+  /** LiteLLM's proxy URL. */
+  readonly baseUrl?: string | undefined;
   readonly generatorFor: (evalCase: EvalCase) => PatchGenerator;
   readonly parser: ProposalParser;
   readonly catalog: ModelCatalog | null;
@@ -29,6 +37,25 @@ export function requireKey(provider: ProviderId, env: Record<string, string | un
   const variables = KEY_VARIABLES[provider];
   const key = variables.map((variable) => env[variable]?.trim()).find((value) => value);
   return key ? ok(key) : err(`Set ${variables.join(' or ')} to run evals against ${provider}. No provider was called.`);
+}
+
+export interface ProviderEnv {
+  readonly apiKey: string | null;
+  readonly baseUrl?: string;
+}
+
+/** What the eval needs from the environment: a key, except for LiteLLM, which needs its proxy URL instead. */
+export function requireProviderEnv(provider: ProviderId, env: Record<string, string | undefined>): Result<ProviderEnv, string> {
+  if (provider !== 'litellm') {
+    const key = requireKey(provider, env);
+    return key.ok ? ok({ apiKey: key.value }) : key;
+  }
+  const baseUrl = env[LITELLM_BASE_URL_VARIABLE]?.trim();
+  if (!baseUrl) {
+    return err(`Set ${LITELLM_BASE_URL_VARIABLE} (e.g. http://localhost:4000) to run evals against litellm. No provider was called.`);
+  }
+  const key = requireKey(provider, env);
+  return ok({ apiKey: key.ok ? key.value : null, baseUrl });
 }
 
 /** Runs every case `repeat` times per model, sequentially, and returns the per-case results. */
@@ -48,14 +75,23 @@ export async function runEval(options: EvalOptions): Promise<RunResult[]> {
   return results;
 }
 
+/** The same settings validation, catalog lookup and output-mode inputs the extension uses. */
 async function settingsFor(options: EvalOptions, model: string): Promise<ProviderSettings> {
-  const capabilities =
-    options.provider === 'openrouter' && options.catalog ? await options.catalog.lookup(model) : null;
-  const updated = ProviderSettings.empty().update(options.provider, {
+  const { provider } = options;
+  const updated = ProviderSettings.empty().update(provider, {
     apiKey: options.apiKey,
     model,
-    ...(capabilities?.ok ? { capabilities: capabilities.value } : {}),
+    ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
   });
   if (!updated.ok) throw updated.error;
-  return updated.value.activate(options.provider);
+  let settings = updated.value.activate(provider);
+  if (provider !== 'anthropic' && options.catalog) {
+    const slot = settings.slot(provider);
+    const capabilities = await options.catalog.lookup({ provider, model: slot.model, apiUrl: apiUrlOf(provider, slot.baseUrl), apiKey: slot.apiKey });
+    if (capabilities.ok) {
+      const withCapabilities = settings.update(provider, { capabilities: capabilities.value });
+      if (withCapabilities.ok) settings = withCapabilities.value;
+    }
+  }
+  return settings;
 }

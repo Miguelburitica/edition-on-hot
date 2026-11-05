@@ -9,8 +9,22 @@ export class MissingApiKeyError extends DomainError {
 
 export class InvalidModelIdError extends DomainError {
   readonly code = 'invalid-model';
-  constructor(model: string) {
-    super(`"${model}" is not an OpenRouter model ID. Use the vendor/model format, e.g. z-ai/glm-5.3-flash.`);
+  constructor(model: string, hint = 'Use the vendor/model format, e.g. z-ai/glm-5.3-flash.', providerLabel = 'OpenRouter') {
+    super(`"${model}" is not a valid ${providerLabel} model ID. ${hint}`);
+  }
+}
+
+export class MissingModelError extends DomainError {
+  readonly code = 'missing-model';
+  constructor(providerLabel: string) {
+    super(`Set the ${providerLabel} model in settings before requesting changes.`);
+  }
+}
+
+export class InvalidBaseUrlError extends DomainError {
+  readonly code = 'invalid-base-url';
+  constructor(url: string) {
+    super(`"${url}" is not a valid proxy URL. Use http:// or https://, e.g. http://localhost:4000.`);
   }
 }
 
@@ -24,7 +38,7 @@ export class UnknownProviderError extends DomainError {
 export class CatalogUnavailableError extends DomainError {
   readonly code = 'catalog-unavailable';
   constructor() {
-    super('The OpenRouter model catalog could not be reached.');
+    super('The model catalog could not be reached.');
   }
 }
 
@@ -64,7 +78,7 @@ export type ProviderFailureKind =
 
 const PROVIDER_MESSAGES: Record<ProviderFailureKind, string> = {
   auth: 'Your API key was rejected. Check it in settings.',
-  credits: 'Your OpenRouter account is out of credits. Add credits to your OpenRouter account and try again.',
+  credits: 'Your provider account is out of credits. Add credits and try again.',
   moderation: "The request was blocked by the provider's content policy.",
   unavailable: 'The model is currently down. Try again in a moment or pick another model in settings.',
   'no-provider': 'No provider can serve this model with the required features. Pick another model in settings.',
