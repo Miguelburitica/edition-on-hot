@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "lint": "eslint .",
+    "lint": "pnpm --filter @hew/extension exec wxt prepare && eslint .",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "spec:validate": "openspec validate --all --strict",
