@@ -1,6 +1,8 @@
 import { ok } from '@hew/core/shared/domain';
 import { ProviderSettings } from '@hew/core/ai/domain';
 import { describe, expect, it, vi } from 'vitest';
+import { DesignSystem } from '@hew/core/design-system/domain';
+import { ChromeDesignSystemRepository, DESIGN_SYSTEMS_KEY } from './chrome-design-system-repository';
 import { ChromeSettingsRepository, SETTINGS_KEY, type StorageAreaLike } from './chrome-settings-repository';
 import { EditorClient } from './editor-client';
 import { editorCommand } from './messages';
@@ -145,8 +147,8 @@ describe('bridgedPatchRequester', () => {
 
 describe('bridgedBudgetRequester', () => {
   it('asks the background for the budget and reports a missing background', async () => {
-    const send = vi.fn(async () => ok({ maxHtmlChars: 6000, maxTargets: 20 }));
-    expect(await bridgedBudgetRequester(send)()).toEqual(ok({ maxHtmlChars: 6000, maxTargets: 20 }));
+    const send = vi.fn(async () => ok({ maxHtmlChars: 6000, maxTargets: 20, maxDesignChars: 1_000 }));
+    expect(await bridgedBudgetRequester(send)()).toEqual(ok({ maxHtmlChars: 6000, maxTargets: 20, maxDesignChars: 1_000 }));
     expect(send).toHaveBeenCalledWith({ type: 'ai/getContextBudget' });
     const gone = await bridgedBudgetRequester(async () => undefined)();
     expect(!gone.ok && gone.error.code).toBe('extension-error');
@@ -160,5 +162,45 @@ describe('EditorClient', () => {
     }, 1);
     const result = await client.send({ type: 'editing/getSnapshot' });
     expect(!result.ok && result.error.code).toBe('not-connected');
+  });
+});
+
+describe('ChromeDesignSystemRepository', () => {
+  const make = (id: string, name = 'Acme') => {
+    const created = DesignSystem.create({
+      id,
+      name,
+      origin: 'https://acme.test',
+      tokens: [{ name: 'color-primary', group: 'color', value: '#2563eb', cssVar: '--color-primary', source: 'variable' }],
+      components: [],
+      createdAt: new Date('2026-11-05T10:00:00Z'),
+      updatedAt: new Date('2026-11-05T10:00:00Z'),
+    });
+    if (!created.ok) throw created.error;
+    return created.value;
+  };
+
+  it('round-trips systems and bindings, and deleting clears bindings', async () => {
+    const storage = new FakeStorage();
+    const repo = new ChromeDesignSystemRepository(storage);
+    await Promise.all([repo.save(make('a')), repo.save(make('b', 'Other')), repo.setActive('https://acme.test', 'a')]);
+    expect((await repo.list()).map((s) => s.id).sort()).toEqual(['a', 'b']);
+    expect((await repo.get('a'))?.tokens[0]?.cssVar).toBe('--color-primary');
+    expect(await repo.activeFor('https://acme.test')).toBe('a');
+    await repo.delete('a');
+    expect(await repo.activeFor('https://acme.test')).toBeNull();
+    expect(storage.data[DESIGN_SYSTEMS_KEY]).toMatchObject({ version: 1, bindings: {} });
+  });
+
+  it('skips stored entries that no longer validate', async () => {
+    const storage = new FakeStorage();
+    storage.data[DESIGN_SYSTEMS_KEY] = {
+      version: 1,
+      systems: { bad: { id: 'bad', name: '', origin: null, tokens: [], components: [], createdAt: '', updatedAt: '' } },
+      bindings: { 'https://x.test': 'bad' },
+    };
+    const repo = new ChromeDesignSystemRepository(storage);
+    expect(await repo.list()).toEqual([]);
+    expect(await repo.get('bad')).toBeNull();
   });
 });

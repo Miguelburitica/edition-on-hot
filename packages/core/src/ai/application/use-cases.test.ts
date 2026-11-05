@@ -8,6 +8,7 @@ import {
   ProviderSettings,
   type GeneratorOutput,
   type ModelCatalog,
+  type ModelLister,
   type PatchGenerator,
   type ProposalDraft,
   type ProposalParser,
@@ -17,6 +18,7 @@ import {
   ClearApiKey,
   GeneratePatch,
   GetContextBudget,
+  ListModels,
   LookupModel,
   SaveProviderSettings,
   TestProviderConnection,
@@ -150,6 +152,59 @@ describe('GeneratePatch', () => {
     const result = await new GeneratePatch(openRouterKey(), gen, parser).execute(request);
     expect(!result.ok && result.error.code).toBe('provider-credits');
     expect(gen.generate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('GeneratePatch design guidance', () => {
+  it('adds the design system guidance for the page, bounded by the budget', async () => {
+    const gen = generator(output(goodDraft));
+    const guidance = { forPage: vi.fn(async () => 'Design system "Acme":\nColors: --brand #f00') };
+    await new GeneratePatch(anthropicKey(), gen, parser, guidance).execute({ ...request, context: { ...request.context, pageUrl: 'https://a.test/x' } });
+    expect(guidance.forPage).toHaveBeenCalledWith('https://a.test/x', CONTEXT_BUDGETS.standard.maxDesignChars);
+    const sent = vi.mocked(gen.generate).mock.calls[0]![0];
+    expect(sent.context.props.designSystem).toContain('--brand #f00');
+  });
+
+  it('still generates when the guidance lookup fails', async () => {
+    const gen = generator(output(goodDraft));
+    const guidance = { forPage: vi.fn(async () => Promise.reject(new Error('storage down'))) };
+    const result = await new GeneratePatch(anthropicKey(), gen, parser, guidance).execute(request);
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(gen.generate).mock.calls[0]![0].context.props.designSystem).toBeUndefined();
+  });
+});
+
+describe('ListModels', () => {
+  const option = (id: string, label = id) => ({ id, label, capabilities: { status: 'found' as const, structuredOutputs: false, tools: true } });
+  const lister = (): ModelLister & { list: ReturnType<typeof vi.fn> } => ({
+    list: vi.fn(async () => ok({ scope: 'account' as const, models: [option('b', 'Zeta'), option('a', 'Alpha')] })),
+  });
+
+  it('lists with the saved key, sorted by label', async () => {
+    const l = lister();
+    const result = await new ListModels(l, anthropicKey()).execute({ provider: 'anthropic' });
+    expect(result.ok && result.value.models.map((m) => m.label)).toEqual(['Alpha', 'Zeta']);
+    expect(l.list).toHaveBeenCalledWith({ provider: 'anthropic', apiUrl: 'https://api.anthropic.com/v1', apiKey: 'sk-ant-test-0000' });
+  });
+
+  it('prefers the key being typed and the proxy URL being edited', async () => {
+    const l = lister();
+    await new ListModels(l, new MemorySettings()).execute({ provider: 'litellm', apiKey: ' sk-lite ', baseUrl: 'http://proxy:4000/' });
+    expect(l.list).toHaveBeenCalledWith({ provider: 'litellm', apiUrl: 'http://proxy:4000/v1', apiKey: 'sk-lite' });
+  });
+
+  it('lists public models without a key, but needs one for Anthropic', async () => {
+    const l = lister();
+    expect((await new ListModels(l, new MemorySettings()).execute({ provider: 'opencode' })).ok).toBe(true);
+    expect(l.list).toHaveBeenCalledWith(expect.objectContaining({ provider: 'opencode', apiKey: null }));
+    const anthropic = await new ListModels(l, new MemorySettings()).execute({ provider: 'anthropic' });
+    expect(!anthropic.ok && anthropic.error.code).toBe('missing-api-key');
+  });
+
+  it('reports unknown providers and unreachable lists', async () => {
+    const down: ModelLister = { list: vi.fn(async () => err(new CatalogUnavailableError())) };
+    expect(await new ListModels(down, new MemorySettings()).execute({ provider: 'nope' })).toMatchObject({ ok: false, error: { code: 'unknown-provider' } });
+    expect(await new ListModels(down, new MemorySettings()).execute({ provider: 'openrouter' })).toMatchObject({ ok: false, error: { code: 'catalog-unavailable' } });
   });
 });
 

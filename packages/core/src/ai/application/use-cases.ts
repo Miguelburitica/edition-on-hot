@@ -9,6 +9,7 @@ import {
   EditContext,
   InvalidProposalError,
   isProviderId,
+  MissingApiKeyError,
   MissingModelError,
   PatchProposal,
   PROVIDER_LABELS,
@@ -19,6 +20,9 @@ import {
   type CatalogQuery,
   type CompatibleProviderId,
   type ContextBudget,
+  type DesignGuidanceSource,
+  type ModelLister,
+  type ModelListing,
   type ContextProfile,
   type EditContextProps,
   type ModelCapabilities,
@@ -88,6 +92,7 @@ export interface ProviderSettingsView {
   readonly anthropic: ProviderSlotView & {
     readonly label: string;
     readonly model: AnthropicModelId;
+    /** Built-in suggestions, used until the account's models are listed. */
     readonly models: readonly { readonly id: AnthropicModelId; readonly label: string }[];
   };
   readonly openrouter: CompatibleSlotView;
@@ -108,6 +113,7 @@ export class GeneratePatch {
     private readonly settings: ProviderSettingsRepository,
     private readonly generator: PatchGenerator,
     private readonly parser: ProposalParser,
+    private readonly guidance?: DesignGuidanceSource,
   ) {}
 
   async execute(request: GeneratePatchRequest): Promise<Result<GeneratePatchResponse, GeneratePatchError>> {
@@ -115,7 +121,10 @@ export class GeneratePatch {
     const config = settings.toConfig();
     if (!config.ok) return err(toAiError(config.error));
 
-    const context = EditContext.create(request.context, settings.budget());
+    const budget = settings.budget();
+    // A failing design system lookup never blocks a change request.
+    const designSystem = await this.guidance?.forPage(request.context.pageUrl, budget.maxDesignChars).catch(() => null);
+    const context = EditContext.create({ ...request.context, designSystem: designSystem ?? undefined }, budget);
     const mode = chooseOutputMode(config.value);
     const repairs = new Set<RepairKind>();
     let latencyMs = 0;
@@ -224,6 +233,44 @@ export class LookupModel {
   }
 }
 
+export interface ListModelsInput {
+  readonly provider: string;
+  /** The key being typed; omitted to use the saved one. */
+  readonly apiKey?: string;
+  /** LiteLLM's proxy URL being edited; defaults to the saved one. */
+  readonly baseUrl?: string;
+}
+
+/** Lists the models the user's key can use, sorted by label, for the settings model field. */
+export class ListModels {
+  constructor(
+    private readonly lister: ModelLister,
+    private readonly settings: ProviderSettingsRepository,
+  ) {}
+
+  async execute(input: ListModelsInput): Promise<Result<ModelListing, AiError>> {
+    if (!isProviderId(input.provider)) return err(toAiError(new UnknownProviderError(input.provider)));
+    const provider = input.provider;
+    const saved = await this.settings.load();
+    const typedKey = input.apiKey?.trim();
+    const draft = saved.update(provider, {
+      ...(typedKey ? { apiKey: typedKey } : {}),
+      ...(input.baseUrl !== undefined && provider !== 'anthropic' ? { baseUrl: input.baseUrl } : {}),
+    });
+    if (!draft.ok) return err(toAiError(draft.error));
+    const apiKey = draft.value.slot(provider).apiKey;
+    // OpenRouter and OpenCode publish a public list; Anthropic lists nothing without a key.
+    if (!apiKey && provider === 'anthropic') return err(toAiError(new MissingApiKeyError(PROVIDER_LABELS[provider])));
+    const apiUrl = provider === 'anthropic' ? ANTHROPIC_API_URL : apiUrlOf(provider, draft.value.slot(provider).baseUrl);
+    const listed = await this.lister.list({ provider, apiUrl, apiKey });
+    if (!listed.ok) return err(toAiError(listed.error));
+    const models = [...listed.value.models].sort((a, b) => a.label.localeCompare(b.label));
+    return ok({ scope: listed.value.scope, models });
+  }
+}
+
+const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1';
+
 export class GetProviderSettings {
   constructor(private readonly settings: ProviderSettingsRepository) {}
 
@@ -315,7 +362,7 @@ function toView(settings: ProviderSettings): ProviderSettingsView {
       maskedKey: settings.maskedKey('anthropic'),
       model: settings.anthropic.model,
       profile: settings.anthropic.profile,
-      models: ANTHROPIC_MODEL_IDS.map((id) => ({ id, label: ANTHROPIC_MODEL_LABELS[id] })),
+      models: ANTHROPIC_MODEL_IDS.map((id) => ({ id, label: ANTHROPIC_MODEL_LABELS[id] ?? id })),
     },
     openrouter: compatibleView(settings, 'openrouter'),
     opencode: compatibleView(settings, 'opencode'),

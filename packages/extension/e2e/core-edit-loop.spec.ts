@@ -274,3 +274,95 @@ test('a change with no visible effect is flagged and its ops are listed', async 
   await expect(entry).toContainText('addCss → section');
   await expect(entry).toContainText('No visible effect: rule ".does-not-exist" matched nothing');
 });
+
+test('settings list the models the account can use, for every provider', async ({ context, extensionId }) => {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options.html`);
+  await expect(options.getByTestId('model-list-status')).toHaveText('Save a key to list the models your account can use.');
+  await options.getByLabel('Anthropic API key').fill(FAKE_KEY);
+  await options.getByRole('button', { name: 'Save' }).click();
+  await expect(options.getByTestId('model-list-status')).toHaveText('3 models available to your account');
+  await expect(options.getByTestId('model-options').locator('option[value="claude-haiku-5-5"]')).toHaveCount(1);
+  // Any listed Claude model can be picked, not only the two built-in ones.
+  await options.getByLabel('Anthropic model').fill('claude-haiku-5-5');
+  await options.getByRole('button', { name: 'Save' }).click();
+  await expect(options.getByRole('status')).toHaveText('Settings saved. Anthropic is the active provider.');
+  await options.reload();
+  await expect(options.getByLabel('Anthropic model')).toHaveValue('claude-haiku-5-5');
+
+  // Without a key OpenCode shows its public list; with one, only the account's enabled models.
+  await options.getByRole('button', { name: /^OpenCode/ }).click();
+  await expect(options.getByTestId('model-list-status')).toHaveText(/4 models available \(add a key/);
+  await options.getByLabel('OpenCode API key').fill('sk-oc-e2e-placeholder-7777');
+  await options.getByRole('button', { name: 'Refresh models' }).click();
+  await expect(options.getByTestId('model-list-status')).toHaveText('3 models available to your account');
+  await expect(options.getByTestId('model-options').locator('option[value="kimi-k3"]')).toHaveCount(1);
+  await expect(options.getByTestId('model-options').locator('option[value="gpt-5.5"]')).toHaveCount(0);
+});
+
+test('design system: extract from the page, guide generation, import tokens, inject them and switch off', async ({ context, extensionId }) => {
+  await saveKey(context, extensionId);
+  const { app, panel } = await openEditor(context, extensionId);
+
+  await panel.getByRole('button', { name: 'Extract from page' }).click();
+  await expect(panel.getByRole('status')).toContainText(/Saved ".+" with \d+ tokens and \d+ components/);
+  await expect(panel.getByTestId('design-system-summary')).toBeVisible();
+  await panel.getByTestId('design-system-summary').click();
+  await expect(panel.getByTestId('design-token').filter({ hasText: '--brand' }).first()).toContainText('#4f46e5');
+
+  // The active design system reaches the generator with the change request.
+  await selectSignupCard(app, panel);
+  await applyPrompt(panel, 'show the design system');
+  await expect(app.locator('.hew-e2e-ds')).toContainText('--brand: #4f46e5');
+  await expect(app.locator('.hew-e2e-ds')).toContainText('Components (reuse these classes):');
+
+  // An imported token the page lacks is injected, so changes using it render.
+  const tokens = JSON.stringify({ color: { $type: 'color', accent: { $value: '#10b981' } } });
+  await panel.getByLabel('Token file').setInputFiles({ name: 'brand.tokens.json', mimeType: 'application/json', buffer: Buffer.from(tokens) });
+  await expect(panel.getByRole('status')).toHaveText('Imported "brand" with 1 tokens.');
+  await expect(panel.getByLabel('Active design system')).toHaveValue(/.+/);
+  await expect(panel.getByLabel('Active design system').locator('option:checked')).toHaveText('brand');
+  await applyPrompt(panel, 'Add a token banner');
+  const tokenBanner = app.locator('.hew-e2e-token');
+  await expect(tokenBanner).toHaveCSS('background-color', 'rgb(16, 185, 129)');
+
+  // Switching off removes the injected tokens; the page's own variables were never touched.
+  await panel.getByLabel('Active design system').selectOption('');
+  await expect(tokenBanner).toHaveCSS('background-color', 'rgb(1, 2, 3)');
+  await expect(app.locator('style[data-hew-design-system]')).toHaveCount(0);
+  expect(await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())).toBe('#4f46e5');
+});
+
+test('export: the applied changes download as Markdown, JSON and an OpenSpec archive', async ({ context, extensionId }) => {
+  await saveKey(context, extensionId);
+  const { app, panel } = await openEditor(context, extensionId);
+  await expect(panel.getByText('Apply a change to export the session as a spec.')).toBeVisible();
+  await selectSignupCard(app, panel);
+  await applyPrompt(panel, 'Add a red notification banner above this form');
+  await expect(app.locator('.hew-e2e-banner')).toHaveCount(1);
+
+  const download = async (format: string) => {
+    await panel.getByLabel('Export format').selectOption(format);
+    const [file] = await Promise.all([panel.waitForEvent('download'), panel.getByRole('button', { name: 'Download' }).click()]);
+    return { name: file.suggestedFilename(), path: await file.path() };
+  };
+  const { readFile } = await import('node:fs/promises');
+
+  const md = await download('markdown');
+  expect(md.name).toMatch(/^ui-localhost-5179-\d{8}-\d{4}\.md$/);
+  const markdown = await readFile(md.path, 'utf8');
+  expect(markdown).toContain('### Requirement: Adds a red notification banner above the selection');
+  expect(markdown).toContain('Requested: "Add a red notification banner above this form"');
+  expect(markdown).toContain('hew-e2e-banner');
+
+  const json = JSON.parse(await readFile((await download('json')).path, 'utf8'));
+  expect(json).toMatchObject({ format: 'hew-change-spec', changes: [{ prompt: 'Add a red notification banner above this form' }] });
+
+  const archive = await download('openspec');
+  expect(archive.name).toMatch(/\.zip$/);
+  expect((await readFile(archive.path)).subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+
+  // Undone changes are not exported.
+  await panel.getByRole('button', { name: 'Undo' }).click();
+  await expect(panel.getByText('Apply a change to export the session as a spec.')).toBeVisible();
+});

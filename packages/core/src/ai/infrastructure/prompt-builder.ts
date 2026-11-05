@@ -22,7 +22,8 @@ const RULES = `Rules:
 - Only target ids that appear in the provided HTML, written exactly like "t0".
 - Never write JavaScript: no <script>, no on* attributes, no javascript: URLs.
 - data-hew-* attributes belong to the extension: never set them or add them to new markup.
-- Match the page's existing look unless asked otherwise: reuse its classes, colors, fonts and spacing. Page styles may win over yours; add !important when a change must override them.`;
+- Match the page's existing look unless asked otherwise: reuse its classes, colors, fonts and spacing. Page styles may win over yours; add !important when a change must override them.
+- When a design system is given, build with it: write token values as var(--token) (e.g. color: var(--color-primary)) instead of raw values, and reuse its component classes for buttons, inputs, cards and the like.`;
 
 const PROMPTED_EXAMPLE = `{"summary":"Adds a banner and alternates row colors","ops":[{"type":"insert","target":"t0","position":"before","html":"<div class=\\"notice\\">Heads up</div>"},{"type":"addCss","css":"li:nth-child(odd) { background: #f3f4f6; } .notice { padding: 8px; }"},{"type":"setStyle","target":"t0","styles":[{"property":"margin-top","value":"8px"}]}]}`;
 
@@ -53,9 +54,10 @@ ${RULES}`;
 export const SYSTEM_PROMPT = buildSystemPrompt('tool', 'record');
 
 export function buildUserMessage(context: EditContext, prompt: string, previousIssues?: readonly string[]): string {
-  const { html, ancestors, styles, pageUrl, pageTitle } = context.props;
+  const { html, ancestors, styles, pageUrl, pageTitle, designSystem } = context.props;
   const parts = [
     `Page: ${pageTitle} (${pageUrl})`,
+    ...(designSystem ? [`Design system (use these tokens and component classes):\n${designSystem}`] : []),
     `Ancestors (nearest first, with the layout of grid and flex containers): ${ancestors.length ? ancestors.join(' < ') : '(none)'}`,
     `Computed styles of t0:\n${Object.entries(styles)
       .map(([k, v]) => `  ${k}: ${v}`)

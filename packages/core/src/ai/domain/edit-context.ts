@@ -7,6 +7,8 @@ export interface EditContextProps {
   readonly targetIds: readonly string[];
   readonly pageUrl: string;
   readonly pageTitle: string;
+  /** Guidance from the active design system, if any. */
+  readonly designSystem?: string | undefined;
 }
 
 /** What the model is shown about the selection. Bounded by a budget and free of form values. */
@@ -25,6 +27,7 @@ export class EditContext {
         ...props,
         html: truncated ? html.slice(0, budget.maxHtmlChars) : html,
         targetIds: props.targetIds.slice(0, budget.maxTargets),
+        designSystem: fitDesignSystem(props.designSystem, budget.maxDesignChars),
       },
       truncated,
     );
@@ -38,4 +41,14 @@ export class EditContext {
 /** Defense in depth: the page side already strips input values before serializing. */
 function stripValueAttributes(html: string): string {
   return html.replace(/<input\b[^>]*>/gi, (tag) => tag.replace(/\svalue\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, ''));
+}
+
+/** Cuts guidance at a line boundary so no token is sent half-written. */
+function fitDesignSystem(text: string | undefined, maxChars: number): string | undefined {
+  const trimmed = text?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= maxChars) return trimmed;
+  const cut = trimmed.slice(0, maxChars);
+  const lastBreak = cut.lastIndexOf('\n');
+  return lastBreak > 0 ? cut.slice(0, lastBreak) : undefined;
 }

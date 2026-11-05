@@ -1,7 +1,18 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { browser } from 'wxt/browser';
-import { EditorClient, type EditorStateChanged } from '../infrastructure';
+import {
+  ActivateDesignSystem,
+  DeleteDesignSystem,
+  ExportDesignSystem,
+  ImportDesignSystem,
+  ListDesignSystems,
+  SaveDesignSystem,
+} from '@hew/core/design-system/application';
+import { DtcgCodec } from '@hew/core/design-system/infrastructure';
+import { ExportChangeSpec } from '@hew/core/handoff/application';
+import { JsonSpecRenderer, MarkdownSpecRenderer, OpenSpecChangeRenderer } from '@hew/core/handoff/infrastructure';
+import { ChromeDesignSystemRepository, EditorClient, type EditorStateChanged, type StorageAreaLike } from '../infrastructure';
 import '../presentation/shared/theme.css';
 import { SidePanelApp, type SidePanelServices } from '../presentation/sidepanel/SidePanelApp';
 
@@ -12,7 +23,40 @@ export function mountSidePanel(root: HTMLElement): void {
   const pinnedTab = new URLSearchParams(location.search).get('tabId');
   const sendToTab = (tabId: number, message: unknown) => browser.tabs.sendMessage(tabId, message);
 
+  const repo = new ChromeDesignSystemRepository(browser.storage.local as unknown as StorageAreaLike);
+  let counter = 0;
+  const library = {
+    repo,
+    ids: { next: () => `ds-${Date.now().toString(36)}-${++counter}` },
+    clock: { now: () => new Date() },
+  };
+  const codec = new DtcgCodec();
+
   const services: SidePanelServices = {
+    designSystems: {
+      list: new ListDesignSystems(repo),
+      save: new SaveDesignSystem(library),
+      importFile: new ImportDesignSystem(library, codec),
+      exportFile: new ExportDesignSystem(repo, codec),
+      activate: new ActivateDesignSystem(repo),
+      remove: new DeleteDesignSystem(repo),
+    },
+    exportSpec: new ExportChangeSpec(
+      { markdown: new MarkdownSpecRenderer(), openspec: new OpenSpecChangeRenderer(), json: new JsonSpecRenderer() },
+      library.clock,
+    ),
+    download(file) {
+      const blob = new Blob([file.content as BlobPart], { type: file.mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    },
+    copyText: (text) => navigator.clipboard.writeText(text),
     async resolveClient() {
       const tabId = pinnedTab ? Number(pinnedTab) : (await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
       return tabId === undefined ? null : new EditorClient(sendToTab, tabId);

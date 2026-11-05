@@ -13,6 +13,8 @@ import {
 export interface MessageSenderLike {
   readonly tab?: { readonly id?: number } | undefined;
   readonly id?: string | undefined;
+  /** The URL of the frame that sent the message, as the browser reports it. */
+  readonly url?: string | undefined;
 }
 
 export type RuntimeListener = (

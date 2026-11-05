@@ -16,8 +16,25 @@ const allow = {
   'ai-domain': ['shared-domain', 'ai-domain'],
   'ai-application': ['shared-domain', 'ai-domain', 'ai-application'],
   'ai-infrastructure': ['shared-domain', 'ai-domain', 'ai-infrastructure'],
-  'ext-infrastructure': ['shared-domain', 'editing-domain', 'editing-application', 'editing-infrastructure', 'ai-domain', 'ai-application', 'ext-infrastructure'],
-  'ext-presentation': ['editing-application', 'ai-application', 'ext-infrastructure', 'ext-presentation'],
+  'design-system-domain': ['shared-domain', 'design-system-domain'],
+  'design-system-application': ['shared-domain', 'design-system-domain', 'design-system-application'],
+  'design-system-infrastructure': ['shared-domain', 'design-system-domain', 'design-system-infrastructure'],
+  'handoff-domain': ['shared-domain', 'handoff-domain'],
+  'handoff-application': ['shared-domain', 'handoff-domain', 'handoff-application'],
+  'handoff-infrastructure': ['shared-domain', 'handoff-domain', 'handoff-infrastructure'],
+  'ext-infrastructure': [
+    'shared-domain',
+    'editing-domain',
+    'editing-application',
+    'editing-infrastructure',
+    'ai-domain',
+    'ai-application',
+    'design-system-domain',
+    'design-system-application',
+    'handoff-application',
+    'ext-infrastructure',
+  ],
+  'ext-presentation': ['editing-application', 'ai-application', 'design-system-application', 'handoff-application', 'ext-infrastructure', 'ext-presentation'],
   'ext-composition': [
     'shared-domain',
     'editing-domain',
@@ -26,6 +43,12 @@ const allow = {
     'ai-domain',
     'ai-application',
     'ai-infrastructure',
+    'design-system-domain',
+    'design-system-application',
+    'design-system-infrastructure',
+    'handoff-domain',
+    'handoff-application',
+    'handoff-infrastructure',
     'ext-infrastructure',
     'ext-presentation',
     'ext-composition',
@@ -40,13 +63,16 @@ const allow = {
     'ai-domain',
     'ai-application',
     'ai-infrastructure',
+    'design-system-domain',
+    'design-system-application',
+    'design-system-infrastructure',
     'eval',
   ],
 };
 
 const elements = [
   { type: 'shared-domain', pattern: `${core}/shared/domain/**`, partialMatch: false },
-  ...['editing', 'ai'].flatMap((ctx) =>
+  ...['editing', 'ai', 'design-system', 'handoff'].flatMap((ctx) =>
     ['domain', 'application', 'infrastructure'].map((layer) => ({
       type: `${ctx}-${layer}`,
       pattern: `${core}/${ctx}/${layer}/**`,

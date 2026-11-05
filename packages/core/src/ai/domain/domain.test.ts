@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CONTEXT_BUDGETS } from './context-budget';
 import { EditContext } from './edit-context';
-import { isOpenRouterModelId, normalizeBaseUrl } from './model';
+import { isAnthropicModelId, isOpenRouterModelId, normalizeBaseUrl } from './model';
 import { chooseOutputMode } from './output-mode';
 import { PatchProposal } from './patch-proposal';
 import { ProviderSettings, type ProviderConfig } from './provider-settings';
@@ -21,15 +21,22 @@ function withKeys(): ProviderSettings {
 
 describe('EditContext', () => {
   it('truncates large HTML to the budget and marks it truncated', () => {
-    const ctx = EditContext.create({ ...baseContext, html: `<div>${'a'.repeat(50)}</div>` }, { maxHtmlChars: 20, maxTargets: 40 });
+    const ctx = EditContext.create({ ...baseContext, html: `<div>${'a'.repeat(50)}</div>` }, { maxHtmlChars: 20, maxTargets: 40, maxDesignChars: 1_000 });
     expect(ctx.props.html).toHaveLength(20);
     expect(ctx.truncated).toBe(true);
   });
 
   it('keeps small HTML intact and caps target ids', () => {
-    const ctx = EditContext.create({ ...baseContext, html: '<p>hi</p>', targetIds: ['t0', 't1', 't2'] }, { maxHtmlChars: 100, maxTargets: 2 });
+    const ctx = EditContext.create({ ...baseContext, html: '<p>hi</p>', targetIds: ['t0', 't1', 't2'] }, { maxHtmlChars: 100, maxTargets: 2, maxDesignChars: 1_000 });
     expect(ctx.truncated).toBe(false);
     expect(ctx.props.targetIds).toEqual(['t0', 't1']);
+  });
+
+  it('cuts design system guidance at a line boundary and drops blank guidance', () => {
+    const designSystem = ['Design system "Acme":', 'Colors: --c-1 #111', 'Spacing: --s-1 4px'].join('\n');
+    const fit = EditContext.create({ ...baseContext, html: '<p></p>', designSystem }, { maxHtmlChars: 100, maxTargets: 2, maxDesignChars: 45 });
+    expect(fit.props.designSystem).toBe('Design system "Acme":\nColors: --c-1 #111');
+    expect(EditContext.create({ ...baseContext, html: '<p></p>', designSystem: '  ' }).props.designSystem).toBeUndefined();
   });
 
   it('removes input value attributes', () => {
@@ -82,6 +89,18 @@ describe('PatchProposal unsafe-op policy', () => {
   it('accepts ordinary attributes and styles', () => {
     expect(issuesFor({ type: 'setAttr', target: 't0', name: 'data-state', value: 'open' })).toEqual([]);
     expect(issuesFor({ type: 'setStyle', target: 't0', styles: { 'background-color': 'red', '--x': '1' } })).toEqual([]);
+  });
+});
+
+describe('Anthropic model ids', () => {
+  it('accepts any claude-* model the account lists', () => {
+    expect(isAnthropicModelId('claude-haiku-5-5')).toBe(true);
+    expect(isAnthropicModelId('claude-3.7-sonnet-latest')).toBe(true);
+    expect(isAnthropicModelId('gpt-5')).toBe(false);
+    expect(isAnthropicModelId('claude-Opus')).toBe(false);
+    const saved = ProviderSettings.empty().update('anthropic', { model: 'claude-haiku-5-5' });
+    expect(saved.ok && saved.value.anthropic.model).toBe('claude-haiku-5-5');
+    expect(ProviderSettings.empty().update('anthropic', { model: 'gpt-5' }).ok).toBe(false);
   });
 });
 

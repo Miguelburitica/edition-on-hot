@@ -68,6 +68,7 @@ export type ProviderFailureKind =
   | 'auth'
   | 'credits'
   | 'moderation'
+  | 'model-access'
   | 'unavailable'
   | 'no-provider'
   | 'rate-limit'
@@ -80,6 +81,7 @@ const PROVIDER_MESSAGES: Record<ProviderFailureKind, string> = {
   auth: 'Your API key was rejected. Check it in settings.',
   credits: 'Your provider account is out of credits. Add credits and try again.',
   moderation: "The request was blocked by the provider's content policy.",
+  'model-access': 'This model is not enabled for your account. Enable it with the provider or pick another model in settings.',
   unavailable: 'The model is currently down. Try again in a moment or pick another model in settings.',
   'no-provider': 'No provider can serve this model with the required features. Pick another model in settings.',
   'rate-limit': 'The provider is rate limiting requests. Wait a moment and try again.',

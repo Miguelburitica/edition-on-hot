@@ -40,3 +40,15 @@ describe('PatchGeneratorRouter', () => {
     expect(router.parse(raw, 'openrouter')).toMatchObject({ ok: true, value: { ops: [{ styles: { color: 'red' } }] } });
   });
 });
+
+describe('prompt builder design system block', () => {
+  it('adds the design system only when the context has one', async () => {
+    const { buildUserMessage, buildSystemPrompt } = await import('./prompt-builder');
+    const { EditContext } = await import('../domain');
+    const base = { html: '<p data-hew-target="t0"></p>', ancestors: [], styles: {}, targetIds: ['t0'], pageUrl: 'u', pageTitle: 't' };
+    expect(buildUserMessage(EditContext.create(base), 'x')).not.toContain('Design system');
+    const withDs = buildUserMessage(EditContext.create({ ...base, designSystem: 'Colors: --brand #f00' }), 'x');
+    expect(withDs).toContain('Design system (use these tokens and component classes):\nColors: --brand #f00');
+    expect(buildSystemPrompt('json_schema', 'pairs')).toContain('var(--token)');
+  });
+});

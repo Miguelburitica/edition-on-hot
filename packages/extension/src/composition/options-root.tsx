@@ -1,6 +1,7 @@
 import {
   ClearApiKey,
   GetProviderSettings,
+  ListModels,
   LookupModel,
   SaveProviderSettings,
   TestProviderConnection,
@@ -12,13 +13,14 @@ import '../presentation/shared/theme.css';
 import { createAiServices } from './ai-services';
 
 export function mountOptions(root: HTMLElement): void {
-  const { router, catalog, settings, requestHostAccess } = createAiServices();
+  const { router, catalog, lister, settings, requestHostAccess } = createAiServices();
   const useCases = {
     get: new GetProviderSettings(settings),
     save: new SaveProviderSettings(settings, catalog),
     clear: new ClearApiKey(settings),
     test: new TestProviderConnection(settings, router),
     lookup: new LookupModel(catalog, settings),
+    listModels: new ListModels(lister, settings),
   };
   createRoot(root).render(
     <StrictMode>

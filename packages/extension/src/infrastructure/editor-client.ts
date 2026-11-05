@@ -1,5 +1,5 @@
 import { err } from '@hew/core/shared/domain';
-import type { EditorCommand, EditorResponse } from './messages';
+import type { EditorCommand, EditorResponse, PageCommand, PageReply } from './messages';
 
 export type SendToTab = (tabId: number, message: unknown) => Promise<unknown>;
 
@@ -13,6 +13,15 @@ export class EditorClient {
   async send(command: EditorCommand): Promise<EditorResponse> {
     try {
       const response = (await this.sendToTab(this.tabId, command)) as EditorResponse | undefined;
+      return response ?? err(notConnected());
+    } catch {
+      return err(notConnected());
+    }
+  }
+
+  async request<C extends PageCommand>(command: C): Promise<PageReply<C['type']>> {
+    try {
+      const response = (await this.sendToTab(this.tabId, command)) as PageReply<C['type']> | undefined;
       return response ?? err(notConnected());
     } catch {
       return err(notConnected());

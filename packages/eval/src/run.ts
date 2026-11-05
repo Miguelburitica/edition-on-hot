@@ -7,7 +7,7 @@ import { runCase, type CaseResult } from './harness';
 export const KEY_VARIABLES: Record<ProviderId, readonly string[]> = {
   anthropic: ['ANTHROPIC_API_KEY'],
   openrouter: ['OPENROUTER_API_KEY', 'OPEN_ROUTER_KEY'],
-  opencode: ['OPENCODE_API_KEY'],
+  opencode: ['OPENCODE_API_KEY', 'OPENCODE_APIKEY'],
   litellm: ['LITELLM_API_KEY'],
 };
 
