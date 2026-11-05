@@ -29,6 +29,13 @@ describe('AiPatchSourceAdapter', () => {
     expect(result.ok && result.value.ops[0]).toMatchObject({ type: 'setStyle', target: { selector: '#go', tag: 'button' } });
   });
 
+  it('scopes stylesheet rules to the selection', async () => {
+    const requester: PatchRequester = async () =>
+      ok({ summary: 's', ops: [{ type: 'addCss', css: 'button{color:red}' }], contextTruncated: false, diagnostics });
+    const result = await new AiPatchSourceAdapter(new DomAnchorResolver(document), requester, standard).propose(selectForm(), prompt('x'));
+    expect(result.ok && result.value.ops[0]).toMatchObject({ type: 'addCss', scope: { selector: '#f', tag: 'form' } });
+  });
+
   it('rejects ops that target unknown ids', async () => {
     const requester: PatchRequester = async () =>
       ok({ summary: 's', ops: [{ type: 'remove', target: 't9' }], contextTruncated: false, diagnostics });

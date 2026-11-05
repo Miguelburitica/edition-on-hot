@@ -52,7 +52,7 @@ export class AiPatchSourceAdapter implements PatchSource {
 
     const ops: PatchOp[] = [];
     for (const proposed of response.value.ops) {
-      const op = toPatchOp(proposed, ctx.targets);
+      const op = toPatchOp(proposed, ctx.targets, selection.anchor);
       if (!op) return err(new PatchSourceError('invalid-patch', `The AI targeted an unknown element ("${targetOf(proposed)}").`));
       ops.push(op);
     }
@@ -64,8 +64,9 @@ function targetOf(op: ProposedOp): string {
   return op.type === 'addCss' ? '' : op.target;
 }
 
-function toPatchOp(op: ProposedOp, targets: ReadonlyMap<string, ElementAnchor>): PatchOp | null {
-  if (op.type === 'addCss') return { type: 'addCss', css: op.css };
+/** Stylesheet rules are scoped to the selection, so they can style repeated items inside it. */
+function toPatchOp(op: ProposedOp, targets: ReadonlyMap<string, ElementAnchor>, selection: ElementAnchor): PatchOp | null {
+  if (op.type === 'addCss') return { type: 'addCss', css: op.css, scope: selection };
   const target = targets.get(op.target);
   if (!target) return null;
   switch (op.type) {

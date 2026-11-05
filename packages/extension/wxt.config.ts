@@ -3,6 +3,8 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   srcDir: 'src',
+  // A visible folder (WXT defaults to `.output`), so Finder and the Load unpacked dialog show it.
+  outDir: 'dist',
   // React is added as a plain Vite plugin: WXT resolves `modules` from its own install location,
   // which pnpm's strict node_modules layout hides.
   vite: () => ({ plugins: [react()] }),

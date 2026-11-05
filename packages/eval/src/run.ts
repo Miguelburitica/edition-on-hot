@@ -3,9 +3,10 @@ import { err, ok, type Result } from '@hew/core/shared/domain';
 import type { EvalCase } from './cases';
 import { runCase, type CaseResult } from './harness';
 
-export const KEY_VARIABLES: Record<ProviderId, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openrouter: 'OPENROUTER_API_KEY',
+/** Environment variables holding each provider's key, in lookup order. The first one is the documented name. */
+export const KEY_VARIABLES: Record<ProviderId, readonly string[]> = {
+  anthropic: ['ANTHROPIC_API_KEY'],
+  openrouter: ['OPENROUTER_API_KEY', 'OPEN_ROUTER_KEY'],
 };
 
 export interface EvalOptions {
@@ -25,9 +26,9 @@ export interface EvalOptions {
 export type RunResult = CaseResult & { readonly run: number };
 
 export function requireKey(provider: ProviderId, env: Record<string, string | undefined>): Result<string, string> {
-  const variable = KEY_VARIABLES[provider];
-  const key = env[variable]?.trim();
-  return key ? ok(key) : err(`Set ${variable} to run evals against ${provider}. No provider was called.`);
+  const variables = KEY_VARIABLES[provider];
+  const key = variables.map((variable) => env[variable]?.trim()).find((value) => value);
+  return key ? ok(key) : err(`Set ${variables.join(' or ')} to run evals against ${provider}. No provider was called.`);
 }
 
 /** Runs every case `repeat` times per model, sequentially, and returns the per-case results. */

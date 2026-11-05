@@ -125,6 +125,14 @@ describe('GeneratePatch', () => {
     expect(vi.mocked(gen.generate).mock.calls[1]![0].previousIssues).toEqual(['(root): expected { summary, ops }']);
   });
 
+  it('retries a reserved attribute with an explanation instead of failing', async () => {
+    const reserved = { summary: 's', ops: [{ type: 'setAttr', target: 't0', name: 'data-hew-submit-hook', value: '1' }] };
+    const gen = generator(output(reserved), output(goodDraft));
+    const result = await new GeneratePatch(anthropicKey(), gen, parser).execute(request);
+    expect(result.ok).toBe(true);
+    expect(vi.mocked(gen.generate).mock.calls[1]![0].previousIssues![0]).toContain('reserved for the extension');
+  });
+
   it('treats unknown targets as invalid output and retries', async () => {
     const gen = generator(output({ summary: 's', ops: [{ type: 'remove', target: 't7' }] }), output(goodDraft));
     expect((await new GeneratePatch(anthropicKey(), gen, parser).execute(request)).ok).toBe(true);

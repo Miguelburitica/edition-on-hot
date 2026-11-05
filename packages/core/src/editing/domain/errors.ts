@@ -63,3 +63,10 @@ export class PatchSourceError extends DomainError {
     super(message);
   }
 }
+
+export class VersionOutOfRangeError extends DomainError {
+  readonly code = 'version-out-of-range';
+  constructor(version: number, count: number) {
+    super(`Version ${version} does not exist (versions 0 to ${count}).`);
+  }
+}

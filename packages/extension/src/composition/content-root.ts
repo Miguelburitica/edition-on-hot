@@ -1,4 +1,14 @@
-import { ApplyPromptToSelection, ClearSelection, GetSessionSnapshot, RedoChangeset, SelectElement, UndoChangeset, type SessionSnapshot, type UseCaseError } from '@hew/core/editing/application';
+import {
+  ApplyPromptToSelection,
+  ClearSelection,
+  GetSessionSnapshot,
+  GoToVersion,
+  RedoChangeset,
+  SelectElement,
+  UndoChangeset,
+  type SessionSnapshot,
+  type UseCaseError,
+} from '@hew/core/editing/application';
 import { ElementAnchor } from '@hew/core/editing/domain';
 import {
   AiPatchSourceAdapter,
@@ -48,6 +58,7 @@ export function startContent(): void {
     apply: new ApplyPromptToSelection(deps),
     undo: new UndoChangeset(deps),
     redo: new RedoChangeset(deps),
+    goTo: new GoToVersion(deps),
     snapshot: new GetSessionSnapshot(deps),
   };
   const overlay = new PickerOverlay(document, { hostAttribute: OVERLAY_ATTR, describe: describeElement });
@@ -101,6 +112,8 @@ export function startContent(): void {
         return respond(await useCases.undo.execute({ sessionId }));
       case 'editing/redo':
         return respond(await useCases.redo.execute({ sessionId }));
+      case 'editing/goToVersion':
+        return respond(await useCases.goTo.execute({ sessionId, version: command.version }));
     }
   };
 

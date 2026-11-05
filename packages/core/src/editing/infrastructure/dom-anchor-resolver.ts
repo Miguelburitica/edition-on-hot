@@ -1,5 +1,5 @@
 import { ElementAnchor } from '../domain';
-import { isInsideOverlay, normalizedText } from './dom-utils';
+import { isInsideOverlay, pageText } from './dom-utils';
 
 const FUZZY_THRESHOLD = 0.8;
 
@@ -42,7 +42,7 @@ export class DomAnchorResolver {
 }
 
 function fingerprint(el: Element): string {
-  return ElementAnchor.normalizeText(normalizedText(el));
+  return ElementAnchor.normalizeText(pageText(el));
 }
 
 /** Dice coefficient over character bigrams. */

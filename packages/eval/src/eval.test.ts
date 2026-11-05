@@ -54,6 +54,10 @@ describe('runEval', () => {
     ]);
     expect(results[0]!.repairs).toEqual(expect.arrayContaining(['extracted-json', 'normalized-target']));
     expect(results[1]!.failedChecks[0]).toContain('the sign up button has a red background');
+    // The results file keeps what the model said and the ops that were applied.
+    expect(results[1]!.rawOutputs).toEqual([{ summary: 'Blue', ops: [{ type: 'setStyle', target: 't0', styles: { 'background-color': 'blue' } }] }]);
+    expect(results[1]!.ops).toEqual([{ type: 'setStyle', target: 't0', styles: { 'background-color': 'blue' } }]);
+    expect(results[0]!.rawOutputs[0]).toMatchObject({ unparsedText: expect.stringContaining('```json') });
 
     const [summary] = summarize(results);
     expect(summary).toMatchObject({
@@ -165,7 +169,8 @@ describe('repeat', () => {
 describe('requireKey', () => {
   it('names the variable to set and never returns an empty key', () => {
     const missing = requireKey('openrouter', {});
-    expect(!missing.ok && missing.error).toBe('Set OPENROUTER_API_KEY to run evals against openrouter. No provider was called.');
+    expect(!missing.ok && missing.error).toBe('Set OPENROUTER_API_KEY or OPEN_ROUTER_KEY to run evals against openrouter. No provider was called.');
+    expect(requireKey('openrouter', { OPEN_ROUTER_KEY: 'sk-or-2' })).toEqual(ok('sk-or-2'));
     expect(requireKey('anthropic', { ANTHROPIC_API_KEY: '  ' }).ok).toBe(false);
     expect(requireKey('openrouter', { OPENROUTER_API_KEY: 'sk-or-1' })).toEqual(ok('sk-or-1'));
   });

@@ -53,6 +53,38 @@ describe('PatchProposal', () => {
   });
 });
 
+describe('PatchProposal unsafe-op policy', () => {
+  const ctx = EditContext.create({ ...baseContext, html: '<form></form>' });
+  const issuesFor = (op: Parameters<typeof PatchProposal.fromDraft>[0]['ops'][number]) => {
+    const result = PatchProposal.fromDraft({ summary: 's', ops: [op] }, ctx);
+    return result.ok ? [] : result.error.issues;
+  };
+
+  it('turns reserved data-hew attributes into an explanatory issue', () => {
+    expect(issuesFor({ type: 'setAttr', target: 't0', name: 'data-hew-submit-hook', value: 'x' })[0]).toContain(
+      'data-hew-* attributes are reserved for the extension',
+    );
+  });
+
+  it('rejects event handlers, javascript: URLs and invalid CSS property names', () => {
+    expect(issuesFor({ type: 'setAttr', target: 't0', name: 'onClick', value: 'x()' })[0]).toContain('event handler');
+    expect(issuesFor({ type: 'setAttr', target: 't0', name: 'href', value: ' JavaScript:x()' })[0]).toContain('javascript:');
+    expect(issuesFor({ type: 'setStyle', target: 't0', styles: { 'color;': 'red' } })[0]).toContain('"color;"');
+  });
+
+  it('explains op types used as attributes and target ids used in stylesheet rules', () => {
+    expect(issuesFor({ type: 'setAttr', target: 't0', name: 'addCss', value: 'addCss' })[0]).toContain('that is an operation type');
+    expect(issuesFor({ type: 'addCss', css: 't2 li { color: red; }' })[0]).toContain('use :scope for t0');
+    expect(issuesFor({ type: 'addCss', css: '[data-hew-target="t1"] { color: red; }' })[0]).toContain('do not exist on the page');
+    expect(issuesFor({ type: 'addCss', css: ':scope > li, .t1 { color: red; }' })).toEqual([]);
+  });
+
+  it('accepts ordinary attributes and styles', () => {
+    expect(issuesFor({ type: 'setAttr', target: 't0', name: 'data-state', value: 'open' })).toEqual([]);
+    expect(issuesFor({ type: 'setStyle', target: 't0', styles: { 'background-color': 'red', '--x': '1' } })).toEqual([]);
+  });
+});
+
 describe('OpenRouter model ids', () => {
   it.each(['z-ai/glm-5.3-flash', 'anthropic/claude-haiku-5.5', '~z-ai/glm-flash-latest', 'z-ai/glm-5.3-flash:batch'])('accepts %s', (id) => {
     expect(isOpenRouterModelId(id)).toBe(true);

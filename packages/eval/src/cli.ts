@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { isProviderId, type PatchGenerator } from '@hew/core/ai/domain';
@@ -12,6 +12,10 @@ import { ok } from '@hew/core/shared/domain';
 import { CASES, type EvalCase } from './cases';
 import { formatFailures, formatInconsistent, formatTable, summarize } from './report';
 import { requireKey, runEval } from './run';
+
+// Keys may live in the repo-root .env (git-ignored); variables already set in the shell take precedence.
+const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const { values } = parseArgs({
   // `pnpm eval -- --flag` forwards the separator literally.

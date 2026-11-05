@@ -1,5 +1,5 @@
 import { ElementAnchor } from '../domain';
-import { cssEscape, normalizedText } from './dom-utils';
+import { cssEscape, pageText } from './dom-utils';
 
 /** Builds the shortest selector (id → data-testid → nth-of-type path) that uniquely matches `el`. */
 export function uniqueSelector(el: Element): string {
@@ -41,7 +41,7 @@ export function buildAnchor(el: Element): ElementAnchor {
     selector: uniqueSelector(el),
     tag: el.tagName.toLowerCase(),
     role: el.getAttribute('role') ?? undefined,
-    textFingerprint: normalizedText(el),
+    textFingerprint: pageText(el),
   });
   if (!result.ok) throw result.error;
   return result.value;

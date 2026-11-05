@@ -3,6 +3,7 @@ export * from './anchor-builder';
 export * from './dom-anchor-resolver';
 export * from './html-sanitizer';
 export * from './scoped-css';
+export * from './visibility';
 export * from './dom-page-gateway';
 export * from './in-memory-edit-session-repository';
 export * from './selection-context';

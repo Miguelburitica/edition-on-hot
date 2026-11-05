@@ -69,6 +69,11 @@ describe('PatchOp validation', () => {
     expect(validatePatchOp({ type: 'setStyle', target, styles: { '--brand': '#f00', 'background-color': 'red' } }).ok).toBe(true);
   });
 
+  it('accepts a selection-scoped stylesheet and treats data-hew-scope as reserved', () => {
+    expect(validatePatchOp({ type: 'addCss', css: 'li{color:red}', scope: anchor('ul', 'ul') }).ok).toBe(true);
+    expect(validatePatchOp({ type: 'setAttr', target, name: 'data-hew-scope', value: 'x' }).ok).toBe(false);
+  });
+
   it('refuses an empty op list', () => {
     expect(validatePatchOps([]).ok).toBe(false);
   });

@@ -9,6 +9,18 @@ export class E2ePatchGenerator implements PatchGenerator {
   async generate({ prompt }: Parameters<PatchGenerator['generate']>[0]) {
     // Lets tests exercise provider error handling end to end.
     if (/simulate no-provider/i.test(prompt)) return err(new ProviderError('no-provider'));
+    if (/every item/i.test(prompt)) {
+      return ok({
+        raw: { summary: 'Borders every item', ops: [{ type: 'addCss', css: 'li { border: 2px solid rgb(0, 128, 0) !important; }' }] },
+        diagnostics: { latencyMs: 0 },
+      });
+    }
+    if (/match nothing/i.test(prompt)) {
+      return ok({
+        raw: { summary: 'Styles an element that does not exist', ops: [{ type: 'addCss', css: '.does-not-exist { color: red; }' }] },
+        diagnostics: { latencyMs: 0 },
+      });
+    }
     const raw = /banner/i.test(prompt)
       ? {
           summary: 'Adds a red notification banner above the selection',

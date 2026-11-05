@@ -20,7 +20,20 @@ const STYLE_PROPS = [
   'border-radius',
   'gap',
   'box-shadow',
+  'width',
+  'max-width',
+  'flex',
+  'flex-direction',
+  'grid-column',
+  'grid-template-columns',
 ];
+/** Initial values that say nothing about the layout. */
+const DEFAULT_VALUES = new Set(['none', 'normal', 'nowrap', 'auto']);
+/** Layout properties that tell the model how an ancestor arranges its children. */
+const LAYOUT_PROPS: Readonly<Record<'grid' | 'flex', readonly string[]>> = {
+  grid: ['grid-template-columns', 'grid-template-rows', 'gap'],
+  flex: ['flex-direction', 'flex-wrap', 'gap'],
+};
 
 export interface SelectionContext {
   /** Selection HTML where each targetable element carries `data-hew-target="tN"`; t0 is the selection. */
@@ -55,6 +68,7 @@ export function buildSelectionContext(el: Element, options: SelectionContextOpti
       return;
     }
     stripFormValues(copy);
+    stripExtensionAttributes(copy);
     if (targets.size < maxTargets) {
       const id = `t${targets.size}`;
       copy.setAttribute(TARGET_ATTR, id);
@@ -64,7 +78,7 @@ export function buildSelectionContext(el: Element, options: SelectionContextOpti
 
   const ancestors: string[] = [];
   for (let p = el.parentElement; p && ancestors.length < MAX_ANCESTORS; p = p.parentElement) {
-    ancestors.push(describeElement(p));
+    ancestors.push(describeAncestor(p, view));
   }
 
   const styles: Record<string, string> = {};
@@ -82,6 +96,28 @@ export function buildSelectionContext(el: Element, options: SelectionContextOpti
     pageUrl: doc.location?.href ?? '',
     pageTitle: doc.title,
   };
+}
+
+/** `main (display: grid; grid-template-columns: 1fr 1fr; gap: 24px)` for grid and flex containers, else the bare description. */
+function describeAncestor(el: Element, view: Window | null): string {
+  const name = describeElement(el);
+  const computed = view?.getComputedStyle(el);
+  const display = computed?.getPropertyValue('display') ?? '';
+  const kind = /grid/.test(display) ? 'grid' : /flex/.test(display) ? 'flex' : null;
+  if (!computed || !kind) return name;
+  const layout = [`display: ${display}`];
+  for (const prop of LAYOUT_PROPS[kind]) {
+    const value = computed.getPropertyValue(prop).trim();
+    if (value && !DEFAULT_VALUES.has(value)) layout.push(`${prop}: ${value}`);
+  }
+  return `${name} (${layout.join('; ')})`;
+}
+
+/** Earlier changesets' bookkeeping (data-hew-cs, data-hew-scope…) is not page content. */
+function stripExtensionAttributes(el: Element): void {
+  for (const name of el.getAttributeNames()) {
+    if (name.startsWith('data-hew-')) el.removeAttribute(name);
+  }
 }
 
 function stripFormValues(el: Element): void {

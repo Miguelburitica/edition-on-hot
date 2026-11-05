@@ -6,11 +6,11 @@ A Chrome extension for product owners: select part of any web page, describe a c
 
 ```bash
 pnpm install
-pnpm build          # production build → packages/extension/.output/chrome-mv3
+pnpm build          # production build → packages/extension/dist/chrome-mv3
 pnpm fixture        # demo page at http://localhost:5179
 ```
 
-Load `packages/extension/.output/chrome-mv3` with **chrome://extensions → Developer mode → Load unpacked**. Add your key on the extension's options page, open a page, click the toolbar icon to open the side panel, then **Select element** and describe the change. `pnpm dev` runs WXT in watch mode with its own browser profile.
+Load `packages/extension/dist/chrome-mv3` with **chrome://extensions → Developer mode → Load unpacked**. Add your key on the extension's options page, open a page, click the toolbar icon to open the side panel, then **Select element** and describe the change. `pnpm dev` runs WXT in watch mode with its own browser profile.
 
 ## Checks
 
@@ -25,11 +25,13 @@ Load `packages/extension/.output/chrome-mv3` with **chrome://extensions → Deve
 
 ## Comparing models
 
-`pnpm eval` runs 10 edit cases against real models with your own key, using the same prompt, output mode, repair and retry as the extension. It is never part of `pnpm test`.
+`pnpm eval` runs 13 edit cases against real models with your own key, using the same prompt, output mode, repair and retry as the extension. It is never part of `pnpm test`.
 
 ```bash
 OPENROUTER_API_KEY=sk-or-… pnpm eval --model z-ai/glm-5.3-flash --model anthropic/claude-haiku-5.5
 ```
+
+The key can also live in a git-ignored `.env` at the repo root (`OPENROUTER_API_KEY` or `OPEN_ROUTER_KEY`, `ANTHROPIC_API_KEY`); variables set in the shell take precedence.
 
 Options: `--repeat N` to run each case N times (the passed column then shows the mean and the per-run range, and cases that flip between runs are listed), `--provider anthropic` (uses `ANTHROPIC_API_KEY`, model ids like `claude-opus-5-5`), `--case <text>` to run matching cases only, `--dry-run`. It prints a per-case line, a summary table (first-try valid, valid after retry, repaired, applied, passed, median latency, cost) and the failures, and writes the full results to `packages/eval/results/`.
 

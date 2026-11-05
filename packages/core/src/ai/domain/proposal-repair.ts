@@ -5,7 +5,8 @@ export type RepairKind =
   | 'normalized-type'
   | 'normalized-target'
   | 'normalized-position'
-  | 'kebab-case-styles';
+  | 'kebab-case-styles'
+  | 'scope-selector';
 
 export interface RepairResult {
   readonly value: unknown;
@@ -123,6 +124,14 @@ function repairOp(op: unknown, repairs: Set<RepairKind>): unknown {
     }
   }
 
+  if (typeof op.css === 'string') {
+    const css = scopeTargetZero(op.css);
+    if (css !== op.css) {
+      next.css = css;
+      repairs.add('scope-selector');
+    }
+  }
+
   if (isObject(op.styles)) {
     const entries = Object.entries(op.styles);
     const kebab = entries.map(([k, v]) => [toKebab(k), v] as const);
@@ -141,6 +150,17 @@ function repairOp(op: unknown, repairs: Set<RepairKind>): unknown {
     if (changed) repairs.add('kebab-case-styles');
   }
   return next;
+}
+
+/**
+ * Target ids only exist in the HTML the model was shown, so a stylesheet rule written against
+ * `[data-hew-target="t0"]` or a bare `t0` would match nothing. Both mean the selection, which
+ * the standard `:scope` selector names (the page side maps it to the selection).
+ */
+function scopeTargetZero(css: string): string {
+  return css
+    .replace(/\[\s*data-hew-target\s*=\s*["']?t0["']?\s*\]/gi, ':scope')
+    .replace(/(^|[\s,>+~{}])t0(?=[\s,>+~.:#[{])/g, '$1:scope');
 }
 
 function normalizeTarget(target: unknown): unknown {

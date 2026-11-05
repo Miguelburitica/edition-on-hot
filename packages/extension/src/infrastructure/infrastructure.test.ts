@@ -64,6 +64,15 @@ describe('ChromeSettingsRepository', () => {
   });
 });
 
+describe('editorCommand', () => {
+  it('accepts goToVersion with a whole, non-negative version only', () => {
+    expect(editorCommand.safeParse({ type: 'editing/goToVersion', version: 2 }).success).toBe(true);
+    expect(editorCommand.safeParse({ type: 'editing/goToVersion', version: -1 }).success).toBe(false);
+    expect(editorCommand.safeParse({ type: 'editing/goToVersion', version: 1.5 }).success).toBe(false);
+    expect(editorCommand.safeParse({ type: 'editing/goToVersion' }).success).toBe(false);
+  });
+});
+
 describe('createHandler', () => {
   it('answers matching messages asynchronously and ignores others', async () => {
     const handle = vi.fn(async () => 'done');

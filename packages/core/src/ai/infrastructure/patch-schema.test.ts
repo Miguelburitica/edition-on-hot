@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseProposalDraft, strictApplyPatchJsonSchema } from './patch-schema';
+import { EditContext } from '../domain';
+import { buildSystemPrompt, buildUserMessage } from './prompt-builder';
 
 /** Walks every node of a JSON schema. */
 function* nodes(schema: unknown): Generator<Record<string, unknown>> {
@@ -68,8 +70,40 @@ describe('parseProposalDraft', () => {
     ]);
   });
 
+  it('accepts up to 60 operations', () => {
+    const ops = (n: number) => Array.from({ length: n }, () => ({ type: 'remove', target: 't0' }));
+    expect(parseProposalDraft({ summary: 's', ops: ops(45) }).ok).toBe(true);
+    expect(parseProposalDraft({ summary: 's', ops: ops(60) }).ok).toBe(true);
+    expect(parseProposalDraft({ summary: 's', ops: ops(61) }).ok).toBe(false);
+  });
+
   it('reports readable issues', () => {
     const result = parseProposalDraft({ summary: 's', ops: [{ type: 'remove', target: '2' }] });
     expect(!result.ok && result.error.issues[0]).toMatch(/^ops\.0\.target: must be a data-hew-target id/);
+  });
+});
+
+describe('system prompt', () => {
+  it.each(['tool', 'json_schema', 'prompted'] as const)('%s mode asks for complete, selection-scoped changes', (mode) => {
+    const prompt = buildSystemPrompt(mode, 'pairs');
+    expect(prompt).toContain('They apply to the selected element (t0), everything inside it');
+    expect(prompt).toContain('Apply the request completely, to every element it concerns');
+    expect(prompt).toContain('never set them');
+    expect(prompt).not.toContain('smallest set');
+  });
+
+  it('tells the model to use the ancestors\' layout for space and size requests', () => {
+    expect(buildSystemPrompt('json_schema', 'pairs')).toContain('grid-column: 1 / -1 on t0 to span every column of a grid parent');
+    const context = EditContext.create({
+      html: '<section data-hew-target="t0"></section>',
+      ancestors: ['main (display: grid; grid-template-columns: 1fr 1fr)'],
+      styles: {},
+      targetIds: ['t0'],
+      pageUrl: '',
+      pageTitle: '',
+    });
+    expect(buildUserMessage(context, 'fill the space')).toContain(
+      'Ancestors (nearest first, with the layout of grid and flex containers): main (display: grid; grid-template-columns: 1fr 1fr)',
+    );
   });
 });

@@ -12,6 +12,7 @@ export const editorCommand = z.discriminatedUnion('type', [
   z.object({ type: z.literal('editing/submitPrompt'), prompt: z.string() }),
   z.object({ type: z.literal('editing/undo') }),
   z.object({ type: z.literal('editing/redo') }),
+  z.object({ type: z.literal('editing/goToVersion'), version: z.number().int().min(0) }),
 ]);
 export type EditorCommand = z.infer<typeof editorCommand>;
 

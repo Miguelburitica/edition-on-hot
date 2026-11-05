@@ -12,16 +12,19 @@ const OPERATIONS = (styles: StylesFormat) => `Operations:
 - setAttr: set an attribute, or remove it with value null
 - setText: replace a target's text content
 - remove: remove a target
-- addCss: add CSS rules; they only apply to elements you inserted, so use it to style new markup by class`;
+- addCss: add CSS rules. They apply to the selected element (t0), everything inside it, and every element you insert. Use them for repeated items, e.g. "li { … }" or "li:nth-child(odd) { … }", instead of styling items one by one. Select with the page's own tags and classes, and write :scope for t0 itself (e.g. ":scope > li"); target ids and data-hew-target exist only in the HTML you were given, not on the page`;
 
 const RULES = `Rules:
+- Apply the request completely, to every element it concerns. Bold, clearly visible changes are welcome when the request asks for them.
+- When the request is about a group of similar elements, change all of them, usually with one addCss rule.
+- When the request implies a different layout or structure, restructure: use replace on t0 or on the containers involved.
+- When the request is about space or size, use the ancestors' layout: e.g. grid-column: 1 / -1 on t0 to span every column of a grid parent, flex: 1 inside a flex row, width: 100% on the elements that should grow.
 - Only target ids that appear in the provided HTML, written exactly like "t0".
-- Never write JavaScript: no <script>, no on* attributes, no javascript: URLs. They are stripped anyway.
-- Match the page's existing look: reuse its classes, colors, fonts and spacing from the provided styles and markup.
-- Prefer the smallest set of operations that fulfills the request.
-- Do not add data-hew-* attributes to new markup.`;
+- Never write JavaScript: no <script>, no on* attributes, no javascript: URLs.
+- data-hew-* attributes belong to the extension: never set them or add them to new markup.
+- Match the page's existing look unless asked otherwise: reuse its classes, colors, fonts and spacing. Page styles may win over yours; add !important when a change must override them.`;
 
-const PROMPTED_EXAMPLE = `{"summary":"Adds a warning banner above the form","ops":[{"type":"insert","target":"t0","position":"before","html":"<div class=\\"notice\\">Heads up</div>"},{"type":"setStyle","target":"t0","styles":[{"property":"margin-top","value":"8px"}]}]}`;
+const PROMPTED_EXAMPLE = `{"summary":"Adds a banner and alternates row colors","ops":[{"type":"insert","target":"t0","position":"before","html":"<div class=\\"notice\\">Heads up</div>"},{"type":"addCss","css":"li:nth-child(odd) { background: #f3f4f6; } .notice { padding: 8px; }"},{"type":"setStyle","target":"t0","styles":[{"property":"margin-top","value":"8px"}]}]}`;
 
 function answerFormat(mode: OutputMode): string {
   switch (mode) {
@@ -37,7 +40,7 @@ function answerFormat(mode: OutputMode): string {
 export function buildSystemPrompt(mode: OutputMode, styles: StylesFormat): string {
   return `You are the editing engine of Hot Edit Web, a browser extension that lets product owners try UI changes on a live web page.
 
-You receive the HTML of the element the user selected. Every element in it that you may target carries a data-hew-target attribute ("t0" is the selected element itself). You also receive its ancestors, its key computed styles and the user's request.
+You receive the HTML of the element the user selected. Every element in it that you may target carries a data-hew-target attribute ("t0" is the selected element itself). You also receive its ancestors (grid and flex containers with their layout), its key computed styles and the user's request.
 
 ${answerFormat(mode)}
 
@@ -53,7 +56,7 @@ export function buildUserMessage(context: EditContext, prompt: string, previousI
   const { html, ancestors, styles, pageUrl, pageTitle } = context.props;
   const parts = [
     `Page: ${pageTitle} (${pageUrl})`,
-    `Ancestors (nearest first): ${ancestors.length ? ancestors.join(' < ') : '(none)'}`,
+    `Ancestors (nearest first, with the layout of grid and flex containers): ${ancestors.length ? ancestors.join(' < ') : '(none)'}`,
     `Computed styles of t0:\n${Object.entries(styles)
       .map(([k, v]) => `  ${k}: ${v}`)
       .join('\n')}`,

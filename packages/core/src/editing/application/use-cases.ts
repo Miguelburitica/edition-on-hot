@@ -104,6 +104,18 @@ export class RedoChangeset {
   }
 }
 
+export class GoToVersion {
+  constructor(private readonly deps: EditingDeps) {}
+
+  /** On a failed jump the error still carries the session state at the last good version. */
+  async execute(input: { sessionId: string; version: number }): Promise<SnapshotResult> {
+    const session = await loadOrStart(this.deps.sessions, input.sessionId);
+    const result = session.goTo(input.version, this.deps.page, this.deps.clock.now());
+    const snapshot = await commit(this.deps, session);
+    return result.ok ? ok(snapshot) : err(toUseCaseError(result.error));
+  }
+}
+
 export class GetSessionSnapshot {
   constructor(private readonly deps: Pick<EditingDeps, 'sessions'>) {}
 

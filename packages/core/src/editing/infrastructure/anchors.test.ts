@@ -63,6 +63,20 @@ describe('DomAnchorResolver', () => {
   });
 });
 
+describe('fingerprints ignore extension-inserted content', () => {
+  it('builds and resolves the same anchor before and after an insert into the element', () => {
+    const form = document.querySelector('#signup')!;
+    const before = buildAnchor(form);
+    const note = document.createElement('p');
+    note.setAttribute('data-hew-cs', 'cs1');
+    note.textContent = 'Added by a changeset';
+    form.prepend(note);
+    expect(buildAnchor(form).textFingerprint).toBe(before.textFingerprint);
+    document.body.querySelector('main')!.prepend(document.createElement('section'));
+    expect(new DomAnchorResolver(document).resolve(before)).toBe(form);
+  });
+});
+
 describe('similarity', () => {
   it('scores identical strings 1 and unrelated strings low', () => {
     expect(similarity('Sign up now', 'Sign up now')).toBe(1);

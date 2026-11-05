@@ -1,5 +1,20 @@
 import type { ProposalDraft } from '@hew/core/ai/domain';
-import { backgroundIsReddish, byText, inserted, insertedWith, isAfter, isBefore, isHidden, normalize, style, words, type Check } from './checks';
+import {
+  backgroundIsReddish,
+  byText,
+  flexGrow,
+  hasBorder,
+  hasRadius,
+  inserted,
+  insertedWith,
+  isAfter,
+  isBefore,
+  isHidden,
+  normalize,
+  style,
+  words,
+  type Check,
+} from './checks';
 
 export interface EvalCase {
   readonly id: string;
@@ -195,5 +210,71 @@ export const CASES: readonly EvalCase[] = [
       }),
     ],
     reference: { summary: 'Increases the card padding', ops: [{ type: 'setStyle', target: 't0', styles: { padding: '32px' } }] },
+  },
+  {
+    id: 'alternating-borders',
+    fixture: 'demo',
+    select: 'ul.list',
+    prompt: 'Give every item a border that alternates between dark gray and light gray',
+    checks: [
+      check('every item has a border', (doc) => {
+        const missing = [...doc.querySelectorAll('ul.list li')].filter((li) => !hasBorder(li)).length;
+        return missing === 0 ? null : `${missing} item(s) without a border`;
+      }),
+      check('odd and even items have different border colors', (doc) => {
+        const [first, second, third] = [...doc.querySelectorAll('ul.list li')].map((li) => style(li, 'border-top-color'));
+        if (!first || !second) return 'border colors unreadable';
+        return first !== second && first === third ? null : `colors: ${first} / ${second} / ${third}`;
+      }),
+    ],
+    reference: {
+      summary: 'Alternates item borders',
+      ops: [{ type: 'addCss', css: 'li { border: 2px solid rgb(48, 54, 61); } li:nth-child(even) { border-color: rgb(208, 215, 222); }' }],
+    },
+  },
+  {
+    id: 'card-every-item',
+    fixture: 'demo',
+    select: 'ul.list',
+    prompt: 'Turn every item of this list into a card with a subtle border and rounded corners',
+    checks: [
+      check('every item has a border', (doc) => {
+        const missing = [...doc.querySelectorAll('ul.list li')].filter((li) => !hasBorder(li)).length;
+        return missing === 0 ? null : `${missing} of 3 items without a border`;
+      }),
+      check('every item has rounded corners', (doc) => {
+        const missing = [...doc.querySelectorAll('ul.list li')].filter((li) => !hasRadius(li)).length;
+        return missing === 0 ? null : `${missing} of 3 items without rounded corners`;
+      }),
+    ],
+    reference: {
+      summary: 'Turns items into cards',
+      ops: [{ type: 'addCss', css: 'li { border: 1px solid rgb(208, 215, 222); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }' }],
+    },
+  },
+  {
+    id: 'form-fills-space',
+    fixture: 'demo',
+    select: 'section.card',
+    prompt: 'Make this form use all the available space; its elements should grow as much as they can',
+    checks: [
+      check('the card spans the whole grid row', (doc) => {
+        const card = doc.querySelector('section.card')!;
+        const column = style(card, 'grid-column') || `${style(card, 'grid-column-start')} / ${style(card, 'grid-column-end')}`;
+        return /1\s*\/\s*-1|span\s*2|1\s*\/\s*3/.test(column) ? null : `grid-column: ${column.trim() || '(unset)'}`;
+      }),
+      check('the action buttons grow', (doc) => {
+        const buttons = [...doc.querySelectorAll('#signup .actions button')];
+        const growing = buttons.filter((b) => flexGrow(b) >= 1 || style(b, 'width') === '100%').length;
+        return growing === buttons.length ? null : `${growing} of ${buttons.length} buttons grow`;
+      }),
+    ],
+    reference: {
+      summary: 'Lets the form fill the row',
+      ops: [
+        { type: 'setStyle', target: 't0', styles: { 'grid-column': '1 / -1' } },
+        { type: 'addCss', css: '.actions .btn { flex-grow: 1; }' },
+      ],
+    },
   },
 ];

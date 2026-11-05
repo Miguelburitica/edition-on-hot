@@ -25,9 +25,12 @@ const proposedOp = z.discriminatedUnion('type', [
   z.object({ type: z.literal('addCss'), css: z.string().min(1) }),
 ]);
 
+/** Large enough for sweeping changes; the strict JSON schema leaves it out because strict modes vary on maxItems. */
+export const MAX_OPS = 60;
+
 export const applyPatchInput = z.object({
   summary: z.string().min(1).max(300).describe('One sentence describing the change for the user.'),
-  ops: z.array(proposedOp).min(1).max(30),
+  ops: z.array(proposedOp).min(1).max(MAX_OPS),
 });
 
 export type ApplyPatchInput = z.infer<typeof applyPatchInput>;

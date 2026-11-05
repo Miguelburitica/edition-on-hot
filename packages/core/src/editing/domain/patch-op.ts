@@ -12,7 +12,8 @@ export type PatchOp =
   | { readonly type: 'setAttr'; readonly target: ElementAnchor; readonly name: string; readonly value: string | null }
   | { readonly type: 'setText'; readonly target: ElementAnchor; readonly text: string }
   | { readonly type: 'remove'; readonly target: ElementAnchor }
-  | { readonly type: 'addCss'; readonly css: string };
+  /** `scope` is the selected element: rules apply to it, its descendants and inserted elements. */
+  | { readonly type: 'addCss'; readonly css: string; readonly scope?: ElementAnchor };
 
 export type PatchOpType = PatchOp['type'];
 

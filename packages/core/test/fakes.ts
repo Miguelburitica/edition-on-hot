@@ -26,6 +26,8 @@ export function prompt(text: string): Prompt {
 export class FakePageGateway implements PageGateway {
   readonly log: string[] = [];
   readonly missing = new Set<string>();
+  /** Targets (selectors) whose ops come back with a hidden-target warning. */
+  readonly hidden = new Set<string>();
 
   apply(op: PatchOp, changesetId: string): Result<AppliedOp, AnchorNotFoundError> {
     if (op.type !== 'addCss' && this.missing.has(op.target.selector)) {
@@ -33,7 +35,15 @@ export class FakePageGateway implements PageGateway {
     }
     const label = `${changesetId}:${describe(op)}`;
     this.log.push(label);
-    return ok({ op, revertToken: label });
+    const warning =
+      op.type !== 'addCss' && this.hidden.has(op.target.selector)
+        ? { kind: 'hidden-target' as const, detail: `${op.target.selector} is hidden` }
+        : undefined;
+    return ok({ op, revertToken: label, warning });
+  }
+
+  review(applied: readonly AppliedOp[]): AppliedOp[] {
+    return [...applied];
   }
 
   revert(applied: AppliedOp): void {

@@ -140,6 +140,13 @@ export function SidePanelApp({ services }: { services: SidePanelServices }) {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit();
               }}
             />
+            {snapshot.currentVersion < snapshot.versionCount && (
+              <p className="muted" data-testid="replace-note" style={{ margin: 0 }}>
+                You are viewing version {snapshot.currentVersion} of {snapshot.versionCount}. Applying will replace{' '}
+                {snapshot.versionCount - snapshot.currentVersion} later version
+                {snapshot.versionCount - snapshot.currentVersion === 1 ? '' : 's'}.
+              </p>
+            )}
             <div className="row spread">
               <span className="muted">⌘/Ctrl + Enter</span>
               <button
@@ -178,7 +185,12 @@ export function SidePanelApp({ services }: { services: SidePanelServices }) {
               </button>
             </div>
           </div>
-          <History changesets={snapshot.changesets} />
+          <History
+            changesets={snapshot.changesets}
+            currentVersion={snapshot.currentVersion}
+            disabled={busy}
+            onGoTo={(version) => void run({ type: 'editing/goToVersion', version })}
+          />
           <p className="muted">
             Changes are a local preview. They are lost when the page reloads, and some apps may redraw over them.
           </p>

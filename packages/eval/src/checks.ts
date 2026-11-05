@@ -69,3 +69,24 @@ export function isBefore(el: Element, ref: Element): boolean {
 export function isAfter(el: Element, ref: Element): boolean {
   return !ref.contains(el) && Boolean(el.compareDocumentPosition(ref) & 2 /* DOCUMENT_POSITION_PRECEDING */);
 }
+
+/** True when the element shows a border on its top edge. */
+export function hasBorder(el: Element): boolean {
+  const width = style(el, 'border-top-width') || style(el, 'border-width');
+  const kind = style(el, 'border-top-style') || style(el, 'border-style');
+  return kind !== '' && kind !== 'none' && kind !== 'hidden' && width !== '0px';
+}
+
+/** jsdom doesn't expand the border-radius shorthand into longhands, so either may carry it. */
+export function hasRadius(el: Element): boolean {
+  return ['border-top-left-radius', 'border-radius'].some((p) => {
+    const radius = style(el, p).trim();
+    return radius !== '' && !/^0(px|%)?$/.test(radius);
+  });
+}
+
+/** flex-grow from the longhand or the `flex` shorthand ("1", "1 1 0%"). */
+export function flexGrow(el: Element): number {
+  const grow = style(el, 'flex-grow') || style(el, 'flex').split(/\s+/)[0] || '0';
+  return Number.parseFloat(grow) || 0;
+}

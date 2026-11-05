@@ -33,6 +33,10 @@ export interface CaseResult {
   readonly costUsd?: number | undefined;
   readonly summary?: string | undefined;
   readonly error?: { readonly code: string; readonly message: string } | undefined;
+  /** The ops of the accepted proposal, after repair, as the model's target ids. */
+  readonly ops?: readonly unknown[] | undefined;
+  /** What the model returned on each attempt, for diagnosing failures. */
+  readonly rawOutputs: readonly unknown[];
 }
 
 const root = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
@@ -67,16 +71,29 @@ export async function runCase(
   if (!target) throw new Error(`case ${evalCase.id}: selector ${evalCase.select} matches nothing`);
 
   const repo = new FixedSettings(settings);
-  const generatePatch = new GeneratePatch(repo, generator, parser);
+  const rawOutputs: unknown[] = [];
+  const recording: PatchGenerator = {
+    generate: async (request) => {
+      const output = await generator.generate(request);
+      rawOutputs.push(output.ok ? output.value.raw : { error: output.error });
+      return output;
+    },
+    ping: (config) => generator.ping(config),
+  };
+  const generatePatch = new GeneratePatch(repo, recording, parser);
   const getBudget = new GetContextBudget(repo);
   let diagnostics: GenerationDiagnostics | undefined;
   let generated = false;
   let summary: string | undefined;
+  let ops: readonly unknown[] | undefined;
   const requestPatch: PatchRequester = async (request) => {
     const result = await generatePatch.execute(request);
     diagnostics = result.ok ? result.value.diagnostics : result.error.diagnostics;
     generated = result.ok;
-    if (result.ok) summary = result.value.summary;
+    if (result.ok) {
+      summary = result.value.summary;
+      ops = result.value.ops;
+    }
     return result;
   };
 
@@ -115,5 +132,7 @@ export async function runCase(
     costUsd: diagnostics?.costUsd,
     summary,
     error: applied.ok ? undefined : { code: applied.error.code, message: applied.error.message },
+    ops,
+    rawOutputs,
   };
 }

@@ -85,6 +85,16 @@ describe('repairDraft', () => {
     expect(!result.ok && result.error.issues[0]).toContain('"t7"');
   });
 
+  it('rewrites references to t0 in stylesheet rules to :scope', () => {
+    const css = (value: string) => {
+      const result = repairDraft({ summary: 's', ops: [{ type: 'addCss', css: value }] });
+      return [(result.value as ProposalDraft).ops[0], result.repairs] as const;
+    };
+    expect(css('t0 li { a: b } t0{c:d}')).toEqual([{ type: 'addCss', css: ':scope li { a: b } :scope{c:d}' }, ['scope-selector']]);
+    expect(css('ul[data-hew-target="t0"] > li {a:b}')[0]).toEqual({ type: 'addCss', css: 'ul:scope > li {a:b}' });
+    expect(css('.t0 li, t1 {a:b}')).toEqual([{ type: 'addCss', css: '.t0 li, t1 {a:b}' }, []]);
+  });
+
   it('reports nothing for already-valid drafts', () => {
     expect(repairDraft(draft).repairs).toEqual([]);
   });

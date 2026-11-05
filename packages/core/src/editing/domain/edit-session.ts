@@ -4,6 +4,7 @@ import {
   NoSelectionError,
   NothingToRedoError,
   NothingToUndoError,
+  VersionOutOfRangeError,
   type AnchorNotFoundError,
   type PatchApplyError,
 } from './errors';
@@ -47,6 +48,15 @@ export class EditSession extends AggregateRoot<EditSessionId, EditingEvent> {
 
   get canRedo(): boolean {
     return this.nextRedo() !== undefined;
+  }
+
+  /** 0 is the original page; version k has the first k changesets applied. */
+  get currentVersion(): number {
+    return this.history.filter((c) => c.status === 'applied').length;
+  }
+
+  get versionCount(): number {
+    return this.history.length;
   }
 
   select(selection: Selection | null, now: Date): void {
@@ -101,6 +111,30 @@ export class EditSession extends AggregateRoot<EditSessionId, EditingEvent> {
     return ok(changeset);
   }
 
+  /**
+   * Shows the page at `version` by undoing or redoing one changeset at a time. A failed redo
+   * stops at the last version that applied and returns the error.
+   */
+  goTo(
+    version: number,
+    page: PageGateway,
+    now: Date,
+  ): Result<number, VersionOutOfRangeError | AnchorNotFoundError | PatchApplyError> {
+    if (!Number.isInteger(version) || version < 0 || version > this.versionCount) {
+      return err(new VersionOutOfRangeError(version, this.versionCount));
+    }
+    while (this.currentVersion > version) this.undo(page, now);
+    while (this.currentVersion < version) {
+      const redone = this.redo(page, now);
+      if (!redone.ok) {
+        const error = redone.error;
+        if (error instanceof NothingToRedoError) break; // unreachable: version <= versionCount
+        return err(error);
+      }
+    }
+    return ok(this.currentVersion);
+  }
+
   private lastApplied(): Changeset | undefined {
     return this.history.findLast((c) => c.status === 'applied');
   }
@@ -125,7 +159,7 @@ function applyAll(
     }
     applied.push(result.value);
   }
-  return ok(applied);
+  return ok(page.review(applied));
 }
 
 function revertAll(applied: readonly AppliedOp[], page: PageGateway): void {

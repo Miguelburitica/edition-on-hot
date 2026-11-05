@@ -87,4 +87,73 @@ describe('EditSession', () => {
     session.select(new Selection(anchor('form', 'form'), 'form'), now);
     expect(session.requireSelection().ok).toBe(true);
   });
+
+  it('keeps warnings from the last application, also after undo', () => {
+    const page = new FakePageGateway();
+    page.hidden.add('button');
+    const session = EditSession.start('tab');
+    applyCs(session, page, 'A', [banner, red]);
+    const [changeset] = session.changesets;
+    expect(changeset!.warnings).toEqual([{ opIndex: 1, warning: { kind: 'hidden-target', detail: 'button is hidden' } }]);
+    session.undo(page, now);
+    expect(changeset!.warnings).toHaveLength(1);
+    page.hidden.clear();
+    session.redo(page, now);
+    expect(changeset!.warnings).toEqual([]);
+  });
+
+  describe('versions', () => {
+    function threeVersions() {
+      const page = new FakePageGateway();
+      const session = EditSession.start('tab');
+      applyCs(session, page, 'A', [banner]);
+      applyCs(session, page, 'B', [red]);
+      applyCs(session, page, 'C', [{ type: 'remove', target: anchor('p') }]);
+      return { page, session };
+    }
+
+    it('jumps back to the original', () => {
+      const { page, session } = threeVersions();
+      expect(session.currentVersion).toBe(3);
+      expect(session.goTo(0, page, now)).toEqual({ ok: true, value: 0 });
+      expect(page.log).toEqual([]);
+      expect(session.changesets.map((c) => c.status)).toEqual(['undone', 'undone', 'undone']);
+    });
+
+    it('jumps forward to an intermediate version', () => {
+      const { page, session } = threeVersions();
+      session.goTo(0, page, now);
+      expect(session.goTo(2, page, now)).toEqual({ ok: true, value: 2 });
+      expect(page.log).toEqual(['A:insert(form)', 'B:setStyle(button)']);
+      expect(session.changesets.map((c) => c.status)).toEqual(['applied', 'applied', 'undone']);
+      expect(session.versionCount).toBe(3);
+    });
+
+    it('rejects versions out of range', () => {
+      const { page, session } = threeVersions();
+      expect(session.goTo(4, page, now)).toMatchObject({ ok: false, error: { code: 'version-out-of-range' } });
+      expect(session.goTo(-1, page, now).ok).toBe(false);
+      expect(session.goTo(1.5, page, now).ok).toBe(false);
+      expect(session.currentVersion).toBe(3);
+    });
+
+    it('stops at the last good version when a redo fails', () => {
+      const { page, session } = threeVersions();
+      session.goTo(0, page, now);
+      page.missing.add('button');
+      const result = session.goTo(3, page, now);
+      expect(result).toMatchObject({ ok: false, error: { code: 'anchor-not-found' } });
+      expect(session.currentVersion).toBe(1);
+      expect(page.log).toEqual(['A:insert(form)']);
+    });
+
+    it('discards later versions when a new change is applied from an earlier one', () => {
+      const { page, session } = threeVersions();
+      session.goTo(1, page, now);
+      applyCs(session, page, 'D', [red]);
+      expect(session.changesets.map((c) => c.id)).toEqual(['A', 'D']);
+      expect(session.currentVersion).toBe(2);
+      expect(session.versionCount).toBe(2);
+    });
+  });
 });

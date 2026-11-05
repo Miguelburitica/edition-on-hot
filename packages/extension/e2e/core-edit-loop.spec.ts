@@ -10,7 +10,7 @@ declare const chrome: {
   };
 };
 
-const extensionPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.output/chrome-mv3-e2e');
+const extensionPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist/chrome-mv3-e2e');
 const FIXTURE_URL = 'http://localhost:5179/';
 /** A placeholder key: e2e builds use a fake PatchGenerator and never call the provider. */
 const FAKE_KEY = 'sk-ant-e2e-placeholder-0000';
@@ -77,12 +77,19 @@ async function openEditor(context: BrowserContext, extensionId: string): Promise
   return { app, panel };
 }
 
-async function selectSignupCard(app: Page, panel: Page) {
-  await panel.getByRole('button', { name: 'Select element' }).click();
+async function selectCard(app: Page, panel: Page, index: number) {
+  await panel.getByRole('button', { name: /^(Select element|Change)$/ }).click();
   await expect(panel.getByText('Click an element on the page.')).toBeVisible();
   // Click inside the card's padding so the card itself (not a child) is picked.
-  await app.locator('section.card').first().click({ position: { x: 6, y: 6 } });
+  await app.locator('section.card').nth(index).click({ position: { x: 6, y: 6 } });
   await expect(panel.getByTestId('selection-label')).toHaveText('section.card');
+}
+
+const selectSignupCard = (app: Page, panel: Page) => selectCard(app, panel, 0);
+
+async function applyPrompt(panel: Page, prompt: string) {
+  await panel.getByRole('textbox').fill(prompt);
+  await panel.getByRole('button', { name: 'Apply' }).click();
 }
 
 test('select, prompt, preview, undo and redo a change', async ({ context, extensionId }) => {
@@ -179,4 +186,50 @@ test('provider errors are explained in the side panel', async ({ context, extens
   await panel.getByRole('button', { name: 'Apply' }).click();
   await expect(panel.getByRole('alert')).toContainText('No provider can serve this model with the required features');
   await expect(panel.getByRole('button', { name: 'Open settings' })).toBeVisible();
+});
+
+test('version timeline: jump to the original and to any step, and replace later versions', async ({ context, extensionId }) => {
+  await saveKey(context, extensionId);
+  const { app, panel } = await openEditor(context, extensionId);
+  const banner = app.locator('.hew-e2e-banner');
+  const items = app.locator('ul.list li');
+
+  await selectSignupCard(app, panel);
+  await applyPrompt(panel, 'Add a red notification banner above this form');
+  await expect(banner).toHaveCount(1);
+
+  // A selection-scoped rule styles every item of the selected card.
+  await selectCard(app, panel, 1);
+  await applyPrompt(panel, 'Put a border on every item');
+  for (const li of await items.all()) await expect(li).toHaveCSS('border-top-color', 'rgb(0, 128, 0)');
+  await expect(panel.getByTestId('changeset').nth(1)).toHaveAttribute('data-current', 'true');
+
+  await panel.getByRole('button', { name: 'Show the original page' }).click();
+  await expect(banner).toHaveCount(0);
+  await expect(items.first()).not.toHaveCSS('border-top-color', 'rgb(0, 128, 0)');
+  await expect(panel.getByTestId('version-original')).toHaveAttribute('data-current', 'true');
+  await expect(app.locator('[data-hew-scope]')).toHaveCount(0);
+
+  await panel.getByRole('button', { name: 'Show version 1' }).click();
+  await expect(banner).toHaveCount(1);
+  await expect(items.first()).not.toHaveCSS('border-top-color', 'rgb(0, 128, 0)');
+  await expect(panel.getByTestId('replace-note')).toHaveText('You are viewing version 1 of 2. Applying will replace 1 later version.');
+
+  await applyPrompt(panel, 'Highlight it');
+  await expect(panel.getByTestId('changeset')).toHaveCount(2);
+  await expect(panel.getByTestId('changeset').nth(1)).toContainText('Highlights the selection');
+  await expect(panel.getByTestId('replace-note')).toHaveCount(0);
+});
+
+test('a change with no visible effect is flagged and its ops are listed', async ({ context, extensionId }) => {
+  await saveKey(context, extensionId);
+  const { app, panel } = await openEditor(context, extensionId);
+  await selectSignupCard(app, panel);
+  await applyPrompt(panel, 'Style something that will match nothing');
+
+  const entry = panel.getByTestId('changeset');
+  await expect(entry).toContainText('applied with warnings');
+  await entry.getByText('1 op · 1 warning').click();
+  await expect(entry).toContainText('addCss → section');
+  await expect(entry).toContainText('No visible effect: rule ".does-not-exist" matched nothing');
 });

@@ -5,6 +5,7 @@ import type { PatchSource } from '../domain';
 import {
   ApplyPromptToSelection,
   GetSessionSnapshot,
+  GoToVersion,
   RedoChangeset,
   SelectElement,
   UndoChangeset,
@@ -102,5 +103,28 @@ describe('Editing use cases', () => {
     const { deps } = setup();
     const result = await new UndoChangeset(deps).execute({ sessionId: 'tab' });
     expect(!result.ok && result.error.code).toBe('nothing-to-undo');
+  });
+
+  it('jumps between versions and reports ops, warnings and the current version', async () => {
+    const { deps, page } = setup();
+    page.hidden.add('form#signup');
+    await new SelectElement(deps).execute({ sessionId: 'tab', anchor: formAnchor, label: 'form#signup' });
+    await new ApplyPromptToSelection(deps).execute({ sessionId: 'tab', prompt: 'one' });
+    const two = await new ApplyPromptToSelection(deps).execute({ sessionId: 'tab', prompt: 'two' });
+    expect(two.ok && two.value).toMatchObject({ currentVersion: 2, versionCount: 2 });
+    expect(two.ok && two.value.changesets.map((c) => c.prompt)).toEqual(['one', 'two']);
+    expect(two.ok && two.value.changesets[0]).toMatchObject({
+      ops: [{ type: 'insert', target: 'form (form#signup)' }],
+      warnings: [{ kind: 'hidden-target', opIndex: 0 }],
+    });
+
+    const original = await new GoToVersion(deps).execute({ sessionId: 'tab', version: 0 });
+    expect(original.ok && original.value).toMatchObject({ currentVersion: 0, canUndo: false, canRedo: true });
+    expect(page.log).toEqual([]);
+
+    page.missing.add('form#signup');
+    const failed = await new GoToVersion(deps).execute({ sessionId: 'tab', version: 2 });
+    expect(!failed.ok && failed.error.code).toBe('anchor-not-found');
+    expect((await new GetSessionSnapshot(deps).execute({ sessionId: 'tab' })).currentVersion).toBe(0);
   });
 });
