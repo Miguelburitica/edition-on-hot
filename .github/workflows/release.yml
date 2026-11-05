@@ -1,0 +1,91 @@
+# On every merge to main: check, build the Chrome extension, and publish it as a versioned
+# GitHub Release with a downloadable zip. Version = <major>.<minor> from
+# packages/extension/package.json + the workflow run number as patch (e.g. v0.1.42).
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm spec:validate
+
+      - name: Compute version
+        id: version
+        run: |
+          base=$(node -p "require('./packages/extension/package.json').version.split('.').slice(0, 2).join('.')")
+          version="${base}.${GITHUB_RUN_NUMBER}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing v${version}"
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # WXT writes the package version into manifest.json.
+          (cd packages/extension && npm pkg set version="$VERSION")
+          pnpm build
+          grep -q "\"version\":\"$VERSION\"" packages/extension/dist/chrome-mv3/manifest.json
+
+      - name: Package
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          zip_name="hot-edit-web-v${VERSION}-chrome.zip"
+          (cd packages/extension/dist/chrome-mv3 && zip -qr "$GITHUB_WORKSPACE/$zip_name" .)
+          sha256sum "$zip_name" > "$zip_name.sha256"
+          echo "zip=${zip_name}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hot-edit-web-v${{ steps.version.outputs.version }}-chrome
+          path: packages/extension/dist/chrome-mv3
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          cat > notes.md <<EOF
+          ## Install
+
+          1. Download \`${ZIP}\` and unzip it.
+          2. Open \`chrome://extensions\`, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder.
+          3. Open the extension's options and add your Anthropic or OpenRouter API key.
+
+          Checksum: \`${ZIP}.sha256\`
+          EOF
+          gh release create "v${VERSION}" "$ZIP" "$ZIP.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Hot Edit Web v${VERSION}" \
+            --notes-file notes.md \
+            --generate-notes

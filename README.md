@@ -2,6 +2,12 @@
 
 A Chrome extension for product owners: select part of any web page, describe a change in plain language, and preview it live. It runs on your own API key: Anthropic, or OpenRouter for models like GLM 5.3 Flash and Claude Haiku 5.5.
 
+## Download
+
+Every merge to `main` publishes a versioned build on the repository's **Releases** page (`hot-edit-web-v<version>-chrome.zip`, with a SHA-256 checksum). Unzip it, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder.
+
+Versions are `<major>.<minor>.<build>`: major and minor come from `packages/extension/package.json`, and the build number is the GitHub Actions run number. To start a new minor or major line, change that file's version (e.g. to `0.2.0`). The workflow is `.github/workflows/release.yml`; it runs lint, typecheck, unit tests and spec validation before building.
+
 ## Run it
 
 ```bash
@@ -44,3 +50,7 @@ Options: `--repeat N` to run each case N times (the passed column then shows the
 - `fixtures/demo-app`: the page the e2e tests edit.
 
 The model never returns JavaScript. It returns structured patch ops, which are validated, sanitized and applied with exact inverses for undo and redo.
+
+## License
+
+[MIT](LICENSE)
