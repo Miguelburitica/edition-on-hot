@@ -62,7 +62,9 @@ export class AnthropicPatchGenerator implements PatchGenerator {
     const call = response.content.find(
       (block): block is Anthropic.Beta.BetaToolUseBlock => block.type === 'tool_use' && block.name === APPLY_PATCH_TOOL_NAME,
     );
-    if (call) return ok({ raw: call.input, diagnostics });
+    if (call && response.stop_reason !== 'max_tokens') return ok({ raw: call.input, diagnostics });
+    // Cut off mid-answer: the patch is incomplete, and asking again would hit the same limit.
+    if (response.stop_reason === 'max_tokens') return err(new ProviderError('output-limit'));
     // No tool call: hand the text on, so repair can still extract JSON written as prose.
     const text = response.content
       .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text')

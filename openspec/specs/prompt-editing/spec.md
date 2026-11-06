@@ -136,6 +136,21 @@ The system SHALL tell the user when the chosen model is not enabled for their ac
 - **WHEN** the provider answers 429 with the message "Free usage limit reached"
 - **THEN** the rate-limit message includes that text
 
+### Requirement: Replies have room for reasoning and cut-off replies are reported
+The system SHALL allow up to 16000 output tokens per request, so reasoning models have room left for the patch after thinking. If a host rejects that limit, the request SHALL be sent once more with 4096. When a reply stops at the output limit without a complete patch, the system SHALL tell the user the change was too large instead of listing schema errors, and SHALL NOT retry.
+
+#### Scenario: Reasoning uses the budget
+- **WHEN** a reasoning model spends 4000 tokens thinking before writing the patch
+- **THEN** the patch is still received and applied
+
+#### Scenario: Reply cut off
+- **WHEN** the provider stops the reply at the output limit and the patch is incomplete
+- **THEN** the user is told the AI ran out of room and is asked to select a smaller element or ask for a smaller change
+
+#### Scenario: Host rejects the limit
+- **WHEN** a proxy answers 400 because 16000 exceeds the model's output limit
+- **THEN** the request is retried once with 4096 output tokens
+
 ### Requirement: The active design system guides generation
 The system SHALL send a summary of the active design system for the page's site with every change request, bounded by the active context profile. It SHALL ask the model to use the tokens through `var(--token)` and to reuse the component classes.
 

@@ -57,6 +57,8 @@ function originOf(url: string): string | null {
   }
 }
 
+const CUSTOM_MODEL = '__custom__';
+
 export interface OptionsAppProps {
   readonly useCases: OptionsUseCases;
   /** Asks the browser for access to a user-configured host. Called first thing in the Save click. */
@@ -74,6 +76,8 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
   const [status, setStatus] = useState<Status>(null);
   const [testing, setTesting] = useState(false);
   const [modelList, setModelList] = useState<ModelList>({ state: 'idle' });
+  /** The user chose to type a model ID that is not in the list. */
+  const [customModel, setCustomModel] = useState(false);
   const listRequest = useRef(0);
 
   /** Loads the models the key can use; a newer request (or provider switch) wins. */
@@ -96,6 +100,7 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
     setProvider(next);
     setApiKey('');
     setModel(v[next].model);
+    setCustomModel(false);
     setProfile(v[next].profile);
     setBaseUrl(next === 'anthropic' ? '' : v[next].baseUrl);
     setCapabilities(next === 'anthropic' ? null : v[next].capabilities);
@@ -143,6 +148,9 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
       : provider === 'anthropic'
         ? view.anthropic.models
         : compatible!.suggestions;
+  const typing = customModel;
+  // A chosen model the list does not contain (or not yet, while it loads) stays selectable as is.
+  const unlisted = !typing && model !== '' && !suggestions.some((s) => s.id === model);
   const refreshModels = async () => {
     // Listing a user-configured proxy needs browser access to it; ask inside the click.
     if (compatible?.baseUrlEditable) {
@@ -248,28 +256,61 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
         <span className="muted">{slot.hasKey ? `Saved key: ${slot.maskedKey}` : 'No key saved.'}</span>
       </label>
 
-      <label className="stack" style={{ gap: 4 }}>
-        <span>{label} model</span>
-        <input
-          name="model"
-          list={`${provider}-models`}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : 'Type to search the models'}
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-        />
-        <datalist id={`${provider}-models`} data-testid="model-options">
-          {suggestions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
-            </option>
-          ))}
-        </datalist>
+      <div className="stack" style={{ gap: 4 }}>
+        {suggestions.length > 0 && (
+          <>
+            <label htmlFor="model-choice">{label} model</label>
+            {/* A select, not a datalist: Chrome hides datalist entries that do not contain the current text. */}
+            <select
+              id="model-choice"
+              name="modelChoice"
+              data-testid="model-options"
+              value={typing ? CUSTOM_MODEL : model}
+              onChange={(e) => {
+                if (e.target.value === CUSTOM_MODEL) {
+                  setCustomModel(true);
+                  return;
+                }
+                setCustomModel(false);
+                setModel(e.target.value);
+              }}
+            >
+              {model === '' && !typing && (
+                <option value="" disabled>
+                  Choose a model
+                </option>
+              )}
+              {unlisted && <option value={model}>{`${model} (not in the list)`}</option>}
+              {suggestions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label === s.id ? s.id : `${s.label} (${s.id})`}
+                </option>
+              ))}
+              <option value={CUSTOM_MODEL}>Other model ID…</option>
+            </select>
+          </>
+        )}
+        {(typing || suggestions.length === 0) && (
+          <>
+            <label htmlFor="model-id">{suggestions.length > 0 ? `${label} model ID` : `${label} model`}</label>
+            <input
+              id="model-id"
+              name="model"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : 'The exact model ID'}
+              value={model}
+              onChange={(e) => {
+                setCustomModel(true);
+                setModel(e.target.value);
+              }}
+            />
+          </>
+        )}
         {compatible && capabilities && model.trim() !== '' && (
           <CapabilityStatus capabilities={capabilities} source={CATALOG_SOURCE[provider as CompatibleProviderId]} />
         )}
-      </label>
+      </div>
       <div className="row spread">
         <span className="muted" data-testid="model-list-status" role="note">
           {modelList.state === 'loading' && 'Loading models…'}
