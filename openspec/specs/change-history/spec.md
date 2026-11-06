@@ -66,4 +66,4 @@ Each history entry SHALL expand to list its operations with their type and targe
 
 #### Scenario: Applied with warnings
 - **WHEN** a changeset was applied with a warning that a rule matched nothing
-- **THEN** its entry says "applied with warnings" and shows the warning
+- **THEN** its entry is marked "applied · warnings" and shows the warning

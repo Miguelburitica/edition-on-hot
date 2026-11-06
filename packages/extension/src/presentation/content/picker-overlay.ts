@@ -1,17 +1,34 @@
+const MONO = `'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace`;
 const STYLES = `
   :host { all: initial; }
   .box {
     position: fixed; pointer-events: none; box-sizing: border-box; border-radius: 3px;
     transition: top 60ms, left 60ms, width 60ms, height 60ms; display: none;
   }
-  .hover { border: 2px solid #3b82f6; background: rgba(59, 130, 246, 0.08); }
-  .selected { border: 2px dashed #f97316; }
+  .hover { border: 2px solid #1f5cff; background: rgba(31, 92, 255, 0.12); }
+  .selected { border: 2px dashed #e8740e; }
   .label {
-    position: fixed; pointer-events: none; display: none; padding: 2px 6px; border-radius: 3px;
-    font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #fff; background: #3b82f6;
-    white-space: nowrap;
+    position: fixed; pointer-events: none; display: none; gap: 8px; height: 20px; padding: 0 7px;
+    border-radius: 4px 4px 4px 0; font: 400 11px/20px ${MONO}; white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); max-width: calc(100vw - 16px); overflow: hidden; text-overflow: ellipsis;
   }
+  .label.below { border-radius: 0 4px 4px 4px; }
+  .label .size { opacity: 0.75; }
+  .hover-label { background: #1f5cff; color: #fff; }
+  .selected-label { background: #e8740e; color: #1b1006; }
+  .hint {
+    position: fixed; left: 12px; bottom: 12px; display: none; align-items: center; gap: 8px;
+    background: #16161b; color: #fbfaf7; border-radius: 6px; padding: 6px 10px;
+    font: 12px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  }
+  .hint .live { width: 6px; height: 6px; border-radius: 50%; background: #7c9bff; }
+  .hint .k { font-family: ${MONO}; font-size: 11px; }
+  @media (prefers-reduced-motion: reduce) { .box { transition: none; } }
 `;
+/** Hover is drawn 3px outside the element and the selection 5px, so neither hides its edges. */
+const HOVER_OUTSET = 3;
+const SELECTED_OUTSET = 5;
 
 export interface PickerOverlayOptions {
   /** Attribute that marks the overlay host so anchors and resolvers skip it. */
@@ -27,7 +44,11 @@ export class PickerOverlay {
   private readonly host: HTMLElement;
   private readonly hoverBox: HTMLElement;
   private readonly selectedBox: HTMLElement;
-  private readonly label: HTMLElement;
+  private readonly hoverLabel: HTMLElement;
+  private readonly selectedLabel: HTMLElement;
+  private readonly hint: HTMLElement;
+  /** Crosshair cursor on the page while picking; removed when picking stops. */
+  private readonly cursor: HTMLStyleElement;
   private hovered: Element | null = null;
   private selected: Element | null = null;
   private picking: { onPick: (el: Element) => void; onCancel: () => void } | null = null;
@@ -45,9 +66,22 @@ export class PickerOverlay {
     style.textContent = STYLES;
     this.hoverBox = this.box('hover');
     this.selectedBox = this.box('selected');
-    this.label = doc.createElement('div');
-    this.label.className = 'label';
-    root.append(style, this.selectedBox, this.hoverBox, this.label);
+    this.hoverLabel = this.labelEl('hover-label');
+    this.selectedLabel = this.labelEl('selected-label');
+    this.hint = doc.createElement('div');
+    this.hint.className = 'hint';
+    const live = doc.createElement('span');
+    live.className = 'live';
+    const text = doc.createElement('span');
+    const key = doc.createElement('span');
+    key.className = 'k';
+    key.textContent = 'Esc';
+    text.append('Click an element · ', key, ' to cancel');
+    this.hint.append(live, text);
+    root.append(style, this.selectedBox, this.hoverBox, this.selectedLabel, this.hoverLabel, this.hint);
+    this.cursor = doc.createElement('style');
+    this.cursor.setAttribute(options.hostAttribute, '');
+    this.cursor.textContent = '*, *::before, *::after { cursor: crosshair !important; }';
 
     const reposition = () => this.scheduleDraw();
     doc.defaultView?.addEventListener('scroll', reposition, true);
@@ -61,6 +95,8 @@ export class PickerOverlay {
   start(onPick: (el: Element) => void, onCancel: () => void): void {
     this.mount();
     this.picking = { onPick, onCancel };
+    if (!this.cursor.isConnected) (this.doc.head ?? this.doc.documentElement).append(this.cursor);
+    this.scheduleDraw();
     this.doc.addEventListener('mousemove', this.onMove, true);
     this.doc.addEventListener('click', this.onClick, true);
     this.doc.addEventListener('mousedown', this.swallow, true);
@@ -71,6 +107,7 @@ export class PickerOverlay {
   stop(): void {
     this.picking = null;
     this.hovered = null;
+    this.cursor.remove();
     this.doc.removeEventListener('mousemove', this.onMove, true);
     this.doc.removeEventListener('click', this.onClick, true);
     this.doc.removeEventListener('mousedown', this.swallow, true);
@@ -133,18 +170,42 @@ export class PickerOverlay {
   }
 
   private draw(): void {
-    place(this.selectedBox, this.selected?.isConnected ? this.selected : null);
+    const selected = this.selected?.isConnected ? this.selected : null;
     const hovered = this.picking ? this.hovered : null;
-    place(this.hoverBox, hovered);
-    if (hovered) {
-      const rect = hovered.getBoundingClientRect();
-      this.label.textContent = this.options.describe(hovered);
-      this.label.style.display = 'block';
-      this.label.style.left = `${Math.max(0, rect.left)}px`;
-      this.label.style.top = `${rect.top > 22 ? rect.top - 22 : rect.bottom + 4}px`;
-    } else {
-      this.label.style.display = 'none';
+    place(this.selectedBox, selected, SELECTED_OUTSET);
+    place(this.hoverBox, hovered, HOVER_OUTSET);
+    this.drawLabel(this.hoverLabel, hovered, HOVER_OUTSET, true);
+    // While picking, only the hovered element is named, so the two labels never overlap.
+    this.drawLabel(this.selectedLabel, this.picking ? null : selected, SELECTED_OUTSET, false);
+    this.hint.style.display = this.picking ? 'flex' : 'none';
+  }
+
+  /** Names the element above its box, or below it when the top of the viewport would clip it. */
+  private drawLabel(label: HTMLElement, el: Element | null, outset: number, withSize: boolean): void {
+    if (!el) {
+      label.style.display = 'none';
+      return;
     }
+    const rect = el.getBoundingClientRect();
+    const [name, size] = label.children as unknown as [HTMLElement, HTMLElement];
+    name.textContent = this.options.describe(el);
+    size.textContent = withSize ? `${Math.round(rect.width)}×${Math.round(rect.height)}` : '';
+    size.style.display = withSize ? 'inline' : 'none';
+    const above = rect.top - outset - 22 >= 0;
+    label.classList.toggle('below', !above);
+    label.style.display = 'flex';
+    label.style.left = `${Math.max(0, rect.left - outset)}px`;
+    label.style.top = `${above ? rect.top - outset - 20 : rect.bottom + outset}px`;
+  }
+
+  private labelEl(kind: string): HTMLElement {
+    const el = this.doc.createElement('div');
+    el.className = `label ${kind}`;
+    const name = this.doc.createElement('span');
+    const size = this.doc.createElement('span');
+    size.className = 'size';
+    el.append(name, size);
+    return el;
   }
 
   private box(kind: string): HTMLElement {
@@ -158,7 +219,7 @@ export class PickerOverlay {
   }
 }
 
-function place(box: HTMLElement, el: Element | null): void {
+function place(box: HTMLElement, el: Element | null, outset: number): void {
   if (!el) {
     box.style.display = 'none';
     return;
@@ -166,9 +227,9 @@ function place(box: HTMLElement, el: Element | null): void {
   const rect = el.getBoundingClientRect();
   Object.assign(box.style, {
     display: 'block',
-    left: `${rect.left}px`,
-    top: `${rect.top}px`,
-    width: `${rect.width}px`,
-    height: `${rect.height}px`,
+    left: `${rect.left - outset}px`,
+    top: `${rect.top - outset}px`,
+    width: `${rect.width + outset * 2}px`,
+    height: `${rect.height + outset * 2}px`,
   });
 }
