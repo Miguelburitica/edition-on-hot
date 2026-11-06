@@ -9,10 +9,11 @@ import {
   ListDesignSystems,
   SaveDesignSystem,
 } from '@hew/core/design-system/application';
+import { GetProviderSettings } from '@hew/core/ai/application';
 import { DtcgCodec } from '@hew/core/design-system/infrastructure';
 import { ExportChangeSpec } from '@hew/core/handoff/application';
 import { JsonSpecRenderer, MarkdownSpecRenderer, OpenSpecChangeRenderer } from '@hew/core/handoff/infrastructure';
-import { ChromeDesignSystemRepository, EditorClient, type EditorStateChanged, type StorageAreaLike } from '../infrastructure';
+import { ChromeDesignSystemRepository, ChromeSettingsRepository, EditorClient, type EditorStateChanged, type StorageAreaLike } from '../infrastructure';
 import '../presentation/shared/theme.css';
 import { SidePanelApp, type SidePanelServices } from '../presentation/sidepanel/SidePanelApp';
 
@@ -32,7 +33,22 @@ export function mountSidePanel(root: HTMLElement): void {
   };
   const codec = new DtcgCodec();
 
+  const settings = new GetProviderSettings(new ChromeSettingsRepository(browser.storage.local as unknown as StorageAreaLike));
+
   const services: SidePanelServices = {
+    async provider() {
+      const view = await settings.execute();
+      const slot = view[view.active];
+      const keyOptional = 'keyRequired' in slot && !slot.keyRequired;
+      return { label: slot.label, model: slot.model, ready: slot.hasKey || keyOptional };
+    },
+    onSettingsChanged(listener) {
+      const onChanged = (_changes: unknown, area: string) => {
+        if (area === 'local') listener();
+      };
+      browser.storage.onChanged.addListener(onChanged);
+      return () => browser.storage.onChanged.removeListener(onChanged);
+    },
     designSystems: {
       list: new ListDesignSystems(repo),
       save: new SaveDesignSystem(library),

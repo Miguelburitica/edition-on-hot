@@ -13,6 +13,7 @@ import type {
   SaveProviderSettings,
   TestProviderConnection,
 } from '@hew/core/ai/application';
+import { AlertIcon, CheckIcon, LockIcon } from '../shared/Icons';
 import { CapabilityStatus } from './CapabilityStatus';
 
 export interface OptionsUseCases {
@@ -58,6 +59,11 @@ function originOf(url: string): string | null {
 }
 
 const CUSTOM_MODEL = '__custom__';
+
+const PROFILES: readonly { id: ContextProfile; title: string; detail: string }[] = [
+  { id: 'standard', title: 'Standard', detail: 'More of the page, best for large models' },
+  { id: 'compact', title: 'Compact', detail: 'Less of the page, best for small models' },
+];
 
 export interface OptionsAppProps {
   readonly useCases: OptionsUseCases;
@@ -200,157 +206,281 @@ export function OptionsApp({ useCases, requestHostAccess }: OptionsAppProps) {
     setStatus({ kind: 'ok', message: `${label} API key removed.` });
   };
 
+  const subtitle = (id: ProviderId) => {
+    const v = view[id];
+    if (view.active === id) return v.model;
+    if (v.hasKey) return 'key saved';
+    return id === 'litellm' ? 'self-hosted proxy' : 'no key';
+  };
+  const listDot =
+    modelList.state === 'loaded' ? 'var(--ok)' : modelList.state === 'error' ? 'var(--err)' : 'var(--rule2)';
+
   return (
-    <main className="stack" style={{ maxWidth: 560, margin: '0 auto', padding: '32px 16px' }}>
-      <h1>Hot Edit Web settings</h1>
-      <p className="muted">
-        Requests run on your own account. Keys are stored only in this browser’s extension storage and are sent only to
-        the provider’s API. Web pages you edit cannot read them.
-      </p>
+    <div className="settings">
+      <div className="topbar">
+        <div className="wrap">
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span className="serif" style={{ fontSize: 20, fontWeight: 500, letterSpacing: '-0.01em' }}>
+              Hot Edit Web
+            </span>
+            <span className="eyebrow">Settings</span>
+          </div>
+          <span className="hstack" style={{ gap: 8, fontSize: 12.5, color: 'var(--ink3)' }}>
+            <LockIcon />
+            Stored in this browser only
+          </span>
+        </div>
+      </div>
 
-      <fieldset className="row" style={{ border: 'none', padding: 0, margin: 0 }} aria-label="Provider">
-        {PROVIDERS.map((id) => (
-          <button
-            key={id}
-            className={id === provider ? 'primary' : undefined}
-            aria-pressed={id === provider}
-            onClick={() => {
-              setStatus(null);
-              showProvider(id, view);
-            }}
-          >
-            {view[id].label}
-            {view.active === id ? ' (active)' : ''}
-          </button>
-        ))}
-      </fieldset>
+      <main className="wrap" style={{ paddingTop: 56, paddingBottom: 80 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingBottom: 36, maxWidth: 720 }}>
+          <h1>Hot Edit Web settings</h1>
+          <p className="lede">
+            Bring your own key. Each provider keeps its own key and model; one is active at a time. Keys never leave this browser except to
+            reach the provider you chose, and pages you edit can never read them.
+          </p>
+        </div>
 
-      {compatible?.baseUrlEditable && (
-        <label className="stack" style={{ gap: 4 }}>
-          <span>{label} proxy URL</span>
-          <input
-            name="baseUrl"
-            type="url"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="http://localhost:4000"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-          />
-          <span className="muted">Saving asks Chrome for access to this host only.</span>
-        </label>
-      )}
-
-      <label className="stack" style={{ gap: 4 }}>
-        <span>
-          {label} API key{compatible && !compatible.keyRequired ? ' (optional)' : ''}
-        </span>
-        <input
-          type="password"
-          autoComplete="off"
-          name="apiKey"
-          placeholder={slot.maskedKey ?? KEY_PLACEHOLDER[provider]}
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
-        <span className="muted">{slot.hasKey ? `Saved key: ${slot.maskedKey}` : 'No key saved.'}</span>
-      </label>
-
-      <div className="stack" style={{ gap: 4 }}>
-        {suggestions.length > 0 && (
-          <>
-            <label htmlFor="model-choice">{label} model</label>
-            {/* A select, not a datalist: Chrome hides datalist entries that do not contain the current text. */}
-            <select
-              id="model-choice"
-              name="modelChoice"
-              data-testid="model-options"
-              value={typing ? CUSTOM_MODEL : model}
-              onChange={(e) => {
-                if (e.target.value === CUSTOM_MODEL) {
-                  setCustomModel(true);
-                  return;
-                }
-                setCustomModel(false);
-                setModel(e.target.value);
-              }}
-            >
-              {model === '' && !typing && (
-                <option value="" disabled>
-                  Choose a model
-                </option>
-              )}
-              {unlisted && <option value={model}>{`${model} (not in the list)`}</option>}
-              {suggestions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label === s.id ? s.id : `${s.label} (${s.id})`}
-                </option>
+        <section className="srow">
+          <div className="key">
+            <span className="eyebrow">01</span>
+            <h2>Provider</h2>
+            <span className="sub">The active one answers every request.</span>
+          </div>
+          <div className="val">
+            <fieldset className="choices">
+              <legend className="sr-only">Provider</legend>
+              {PROVIDERS.map((id) => (
+                <label key={id} className="choice">
+                  <input
+                    type="radio"
+                    name="provider"
+                    checked={id === provider}
+                    onChange={() => {
+                      setStatus(null);
+                      showProvider(id, view);
+                    }}
+                  />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                    <span className="hstack" style={{ gap: 8 }}>
+                      <span className="t">{view[id].label}</span>
+                      {view.active === id ? (
+                        <span className="badge b-view">active</span>
+                      ) : id === provider ? (
+                        <span className="badge b-ghost">editing</span>
+                      ) : null}
+                    </span>
+                    <span className="s" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {subtitle(id)}
+                    </span>
+                  </span>
+                </label>
               ))}
-              <option value={CUSTOM_MODEL}>Other model ID…</option>
-            </select>
-          </>
-        )}
-        {(typing || suggestions.length === 0) && (
-          <>
-            <label htmlFor="model-id">{suggestions.length > 0 ? `${label} model ID` : `${label} model`}</label>
-            <input
-              id="model-id"
-              name="model"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : 'The exact model ID'}
-              value={model}
-              onChange={(e) => {
-                setCustomModel(true);
-                setModel(e.target.value);
-              }}
-            />
-          </>
-        )}
-        {compatible && capabilities && model.trim() !== '' && (
-          <CapabilityStatus capabilities={capabilities} source={CATALOG_SOURCE[provider as CompatibleProviderId]} />
-        )}
-      </div>
-      <div className="row spread">
-        <span className="muted" data-testid="model-list-status" role="note">
-          {modelList.state === 'loading' && 'Loading models…'}
-          {modelList.state === 'idle' && (provider === 'anthropic' ? 'Save a key to list the models your account can use.' : '')}
-          {modelList.state === 'loaded' &&
-            `${modelList.models.length} model${modelList.models.length === 1 ? '' : 's'} ${
-              modelList.scope === 'account' ? 'available to your account' : 'available (add a key to see your account’s)'
-            }`}
-          {modelList.state === 'error' && `Could not load the model list: ${modelList.message}`}
-        </span>
-        <button className="link" disabled={modelList.state === 'loading'} onClick={() => void refreshModels()}>
-          Refresh models
-        </button>
-      </div>
+            </fieldset>
+          </div>
+        </section>
 
-      <label className="stack" style={{ gap: 4 }}>
-        <span>Context size</span>
-        <select name="profile" value={profile} onChange={(e) => setProfile(e.target.value as ContextProfile)}>
-          <option value="standard">Standard (more of the page, best for large models)</option>
-          <option value="compact">Compact (less of the page, best for small models)</option>
-        </select>
-      </label>
+        <section className="srow">
+          <div className="key">
+            <span className="eyebrow">02</span>
+            <h2>{compatible?.baseUrlEditable ? 'Connection' : 'API key'}</h2>
+            <span className="sub">{label}</span>
+          </div>
+          <div className="val">
+            {compatible?.baseUrlEditable && (
+              <div className="field">
+                <label htmlFor="base-url">
+                  <span>
+                    <span className="sr-only">{label} </span>Proxy URL
+                  </span>
+                </label>
+                <input
+                  id="base-url"
+                  className="in mono"
+                  name="baseUrl"
+                  type="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="http://localhost:4000"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                />
+                <span className="help">Saving asks Chrome for access to this host only.</span>
+              </div>
+            )}
+            <div className="field">
+              <label htmlFor="api-key">
+                <span>
+                  <span className="sr-only">{label} </span>API key
+                  {compatible && !compatible.keyRequired && <span style={{ fontWeight: 400, color: 'var(--ink3)' }}> (optional)</span>}
+                </span>
+              </label>
+              <input
+                id="api-key"
+                className="in mono"
+                type="password"
+                autoComplete="off"
+                name="apiKey"
+                placeholder={slot.maskedKey ?? KEY_PLACEHOLDER[provider]}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+              <span className="help">{slot.hasKey ? `Saved key: ${slot.maskedKey}` : 'No key saved.'}</span>
+            </div>
+          </div>
+        </section>
 
-      <div className="row">
-        <button className="primary" onClick={() => void save()}>
-          {isActive ? 'Save' : `Save and use ${label}`}
-        </button>
-        <button disabled={!isActive || (!slot.hasKey && compatible?.keyRequired !== false) || testing} onClick={() => void test()}>
-          {testing ? 'Testing…' : compatible?.keyRequired === false ? 'Test connection' : 'Test key'}
-        </button>
-        <button disabled={!slot.hasKey} onClick={() => void clear()}>
-          Clear key
-        </button>
-      </div>
+        <section className="srow">
+          <div className="key">
+            <span className="eyebrow">03</span>
+            <h2>Model</h2>
+            <span className="sub">{provider === 'litellm' ? 'Listed from your proxy.' : 'Listed from your account.'}</span>
+          </div>
+          <div className="val">
+            {suggestions.length > 0 && (
+              <div className="field">
+                <label htmlFor="model-choice">
+                  <span>
+                    <span className="sr-only">{label} </span>Model
+                  </span>
+                </label>
+                {/* A select, not a datalist: Chrome hides datalist entries that do not contain the current text. */}
+                <select
+                  id="model-choice"
+                  className="in"
+                  name="modelChoice"
+                  data-testid="model-options"
+                  value={typing ? CUSTOM_MODEL : model}
+                  onChange={(e) => {
+                    if (e.target.value === CUSTOM_MODEL) {
+                      setCustomModel(true);
+                      return;
+                    }
+                    setCustomModel(false);
+                    setModel(e.target.value);
+                  }}
+                >
+                  {model === '' && !typing && (
+                    <option value="" disabled>
+                      Choose a model
+                    </option>
+                  )}
+                  {unlisted && <option value={model}>{`${model} (not in the list)`}</option>}
+                  {suggestions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label === s.id ? s.id : `${s.label} (${s.id})`}
+                    </option>
+                  ))}
+                  <option value={CUSTOM_MODEL}>Other model ID…</option>
+                </select>
+              </div>
+            )}
+            <div className="spread" style={{ flexWrap: 'wrap' }}>
+              <span className="hstack" style={{ gap: 8, color: 'var(--ink2)', fontSize: 12.5 }}>
+                <span className="ldot" style={{ background: listDot }} />
+                <span data-testid="model-list-status" role="note">
+                  {modelList.state === 'loading' && 'Loading models…'}
+                  {modelList.state === 'idle' && (provider === 'anthropic' ? 'Save a key to list the models your account can use.' : '')}
+                  {modelList.state === 'loaded' &&
+                    `${modelList.models.length} model${modelList.models.length === 1 ? '' : 's'} ${
+                      modelList.scope === 'account' ? 'available to your account' : 'available (add a key to see your account’s)'
+                    }`}
+                  {modelList.state === 'error' && `Could not load the model list: ${modelList.message}`}
+                </span>
+              </span>
+              <button
+                className="btn ghost sm"
+                style={{ color: 'var(--accent-ink)' }}
+                disabled={modelList.state === 'loading'}
+                onClick={() => void refreshModels()}
+              >
+                Refresh models
+              </button>
+            </div>
+            {(typing || suggestions.length === 0) && (
+              <div className="field">
+                <label htmlFor="model-id">
+                  <span>
+                    <span className="sr-only">{label} </span>
+                    {suggestions.length > 0 ? 'Model ID' : 'Model'}
+                  </span>
+                </label>
+                <input
+                  id="model-id"
+                  className="in mono"
+                  name="model"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={provider === 'litellm' ? 'The model name your proxy exposes' : 'The exact model ID'}
+                  value={model}
+                  onChange={(e) => {
+                    setCustomModel(true);
+                    setModel(e.target.value);
+                  }}
+                />
+              </div>
+            )}
+            {compatible && capabilities && model.trim() !== '' && (
+              <CapabilityStatus capabilities={capabilities} source={CATALOG_SOURCE[provider as CompatibleProviderId]} />
+            )}
+          </div>
+        </section>
 
-      {status && (
-        <p className={status.kind === 'ok' ? 'success' : 'error'} role="status">
-          {status.message}
-        </p>
-      )}
-    </main>
+        <section className="srow">
+          <div className="key">
+            <span className="eyebrow">04</span>
+            <h2>Context size</h2>
+            <span className="sub">How much of the page goes with each request.</span>
+          </div>
+          <div className="val">
+            <fieldset className="choices">
+              <legend className="sr-only">Context size</legend>
+              {PROFILES.map((p) => (
+                <label key={p.id} className="choice">
+                  <input type="radio" name="profile" value={p.id} checked={profile === p.id} onChange={() => setProfile(p.id)} />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span className="t">{p.title}</span>
+                    <span className="d">{p.detail}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          </div>
+        </section>
+
+        <section className="srow" style={{ borderBottom: '1px solid var(--rule)' }}>
+          <div className="key" />
+          <div className="val">
+            <div className="hstack" style={{ gap: 8 }}>
+              <button className="btn primary" onClick={() => void save()}>
+                {isActive ? 'Save' : `Save and use ${label}`}
+              </button>
+              <button
+                className={testing ? 'btn busy' : 'btn'}
+                disabled={!isActive || (!slot.hasKey && compatible?.keyRequired !== false) || testing}
+                onClick={() => void test()}
+              >
+                {testing && <span className="spin" aria-hidden="true" />}
+                {testing ? 'Testing…' : compatible?.keyRequired === false ? 'Test connection' : 'Test key'}
+              </button>
+              <button className="btn ghost danger" disabled={!slot.hasKey} onClick={() => void clear()}>
+                Clear key
+              </button>
+            </div>
+            {status && (
+              <span className="status-line" role="status" style={{ color: status.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>
+                {status.kind === 'ok' ? <CheckIcon /> : <AlertIcon />}
+                <span style={{ color: 'var(--ink)' }}>{status.message}</span>
+              </span>
+            )}
+            {!isActive && !status && (
+              <span className="status-line" style={{ color: 'var(--ink3)', fontSize: 12.5 }}>
+                {view[view.active].label} stays active until you save.
+              </span>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }

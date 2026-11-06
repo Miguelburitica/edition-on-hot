@@ -46,7 +46,7 @@ const FAKE_OPENROUTER_KEY = 'sk-or-e2e-placeholder-9999';
 async function saveOpenRouter(context: BrowserContext, extensionId: string, model = 'z-ai/glm-5.3-flash'): Promise<Page> {
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
-  await options.getByRole('button', { name: /^OpenRouter/ }).click();
+  await options.getByRole('radio', { name: /^OpenRouter/ }).click();
   await options.getByLabel('OpenRouter API key').fill(FAKE_OPENROUTER_KEY);
   await chooseModel(options, 'OpenRouter', model);
   await options.getByRole('button', { name: /^Save/ }).click();
@@ -151,13 +151,13 @@ test('OpenRouter: keys are kept per provider and the edit loop runs with it acti
   const options = await saveOpenRouter(context, extensionId);
   await expect(options.getByRole('status')).toHaveText('Settings saved. OpenRouter is the active provider.');
   await expect(options.getByTestId('model-status')).toHaveText(/Found in the OpenRouter catalog · supports structured outputs and tools/);
-  await expect(options.getByLabel('Context size')).toHaveValue('compact');
+  await expect(options.getByRole('radio', { name: /^Compact/ })).toBeChecked();
 
   // Both keys survive a reload, and OpenRouter stays active.
   await options.reload();
-  await expect(options.getByRole('button', { name: 'OpenRouter (active)' })).toBeVisible();
+  await expect(options.getByRole('radio', { name: /^OpenRouter active/ })).toBeChecked();
   await expect(options.getByText('Saved key: sk-or-e…9999')).toBeVisible();
-  await options.getByRole('button', { name: /^Anthropic/ }).click();
+  await options.getByRole('radio', { name: /^Anthropic/ }).click();
   await expect(options.getByText('Saved key: sk-ant-…0000')).toBeVisible();
   await options.close();
 
@@ -181,8 +181,8 @@ test('OpenRouter: model ids are validated and checked against the catalog', asyn
 test('OpenCode: the model is checked against its catalog and the edit loop runs with it active', async ({ context, extensionId }) => {
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
-  await options.getByRole('button', { name: /^OpenCode/ }).click();
-  await expect(options.getByLabel('OpenCode model', { exact: true })).toHaveValue('glm-5.3-flash');
+  await options.getByRole('radio', { name: /^OpenCode/ }).click();
+  await expect(options.getByLabel('OpenCode Model', { exact: true })).toHaveValue('glm-5.3-flash');
   await expect(options.getByTestId('model-status')).toHaveText(/Found in the OpenCode catalog · supports structured outputs and tools/);
   await options.getByLabel('OpenCode API key').fill('sk-oc-e2e-placeholder-7777');
   await options.getByRole('button', { name: /^Save/ }).click();
@@ -199,7 +199,7 @@ test('OpenCode: the model is checked against its catalog and the edit loop runs 
 test('LiteLLM: a proxy URL and model without a key are saved and survive a reload', async ({ context, extensionId }) => {
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options.html`);
-  await options.getByRole('button', { name: /^LiteLLM/ }).click();
+  await options.getByRole('radio', { name: /^LiteLLM/ }).click();
   await expect(options.getByLabel('LiteLLM proxy URL')).toHaveValue('http://localhost:4000');
   await expect(options.getByLabel('LiteLLM API key (optional)')).toBeVisible();
 
@@ -213,7 +213,7 @@ test('LiteLLM: a proxy URL and model without a key are saved and survive a reloa
   await expect(options.getByRole('status')).toHaveText('Settings saved. LiteLLM is the active provider.');
 
   await options.reload();
-  await expect(options.getByRole('button', { name: 'LiteLLM (active)' })).toBeVisible();
+  await expect(options.getByRole('radio', { name: /^LiteLLM active/ })).toBeChecked();
   await expect(options.getByLabel('LiteLLM proxy URL')).toHaveValue('https://llm.example.com');
   await expect(options.getByLabel('LiteLLM model')).toHaveValue('team-gpt');
   await expect(options.getByRole('button', { name: 'Test connection' })).toBeEnabled();
@@ -226,7 +226,7 @@ test('provider errors are explained in the side panel', async ({ context, extens
   await panel.getByRole('textbox').fill('simulate no-provider');
   await panel.getByRole('button', { name: 'Apply' }).click();
   await expect(panel.getByRole('alert')).toContainText('No provider can serve this model with the required features');
-  await expect(panel.getByRole('button', { name: 'Open settings' })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Choose a model' })).toBeVisible();
 });
 
 test('version timeline: jump to the original and to any step, and replace later versions', async ({ context, extensionId }) => {
@@ -254,7 +254,7 @@ test('version timeline: jump to the original and to any step, and replace later 
   await panel.getByRole('button', { name: 'Show version 1' }).click();
   await expect(banner).toHaveCount(1);
   await expect(items.first()).not.toHaveCSS('border-top-color', 'rgb(0, 128, 0)');
-  await expect(panel.getByTestId('replace-note')).toHaveText('You are viewing version 1 of 2. Applying will replace 1 later version.');
+  await expect(panel.getByTestId('replace-note')).toHaveText('Branching from v1. Applying replaces v2.');
 
   await applyPrompt(panel, 'Highlight it');
   await expect(panel.getByTestId('changeset')).toHaveCount(2);
@@ -269,7 +269,7 @@ test('a change with no visible effect is flagged and its ops are listed', async 
   await applyPrompt(panel, 'Style something that will match nothing');
 
   const entry = panel.getByTestId('changeset');
-  await expect(entry).toContainText('applied with warnings');
+  await expect(entry).toContainText('applied · warnings');
   await entry.getByText('1 op · 1 warning').click();
   await expect(entry).toContainText('addCss → section');
   await expect(entry).toContainText('No visible effect: rule ".does-not-exist" matched nothing');
@@ -278,10 +278,10 @@ test('a change with no visible effect is flagged and its ops are listed', async 
 /** Picks a listed model, or types the ID through "Other model ID…" when it is not listed. */
 async function chooseModel(page: Page, provider: string, id: string) {
   const select = page.locator('select[name="modelChoice"]');
-  if ((await select.count()) === 0) return page.getByLabel(`${provider} model`, { exact: true }).fill(id);
+  if ((await select.count()) === 0) return page.getByLabel(`${provider} Model`, { exact: true }).fill(id);
   if ((await select.locator(`option[value="${id}"]`).count()) > 0) return select.selectOption(id);
   await select.selectOption('__custom__');
-  await page.getByLabel(`${provider} model ID`).fill(id);
+  await page.getByLabel(`${provider} Model ID`).fill(id);
 }
 
 test('settings list the models the account can use, for every provider', async ({ context, extensionId }) => {
@@ -297,10 +297,10 @@ test('settings list the models the account can use, for every provider', async (
   await options.getByRole('button', { name: 'Save' }).click();
   await expect(options.getByRole('status')).toHaveText('Settings saved. Anthropic is the active provider.');
   await options.reload();
-  await expect(options.getByLabel('Anthropic model', { exact: true })).toHaveValue('claude-haiku-5-5');
+  await expect(options.getByLabel('Anthropic Model', { exact: true })).toHaveValue('claude-haiku-5-5');
 
   // Without a key OpenCode shows its public list; with one, only the account's enabled models.
-  await options.getByRole('button', { name: /^OpenCode/ }).click();
+  await options.getByRole('radio', { name: /^OpenCode/ }).click();
   await expect(options.getByTestId('model-list-status')).toHaveText(/4 models available \(add a key/);
   await options.getByLabel('OpenCode API key').fill('sk-oc-e2e-placeholder-7777');
   await options.getByRole('button', { name: 'Refresh models' }).click();
@@ -310,11 +310,11 @@ test('settings list the models the account can use, for every provider', async (
   // Every listed model is offered, whatever is already chosen (a datalist would filter by it).
   await expect(options.getByTestId('model-options').locator('option')).toHaveCount(4);
   await options.getByTestId('model-options').selectOption('kimi-k3');
-  await expect(options.getByLabel('OpenCode model', { exact: true })).toHaveValue('kimi-k3');
+  await expect(options.getByLabel('OpenCode Model', { exact: true })).toHaveValue('kimi-k3');
   // An ID that is not listed can still be typed.
   await options.getByTestId('model-options').selectOption('__custom__');
-  await options.getByLabel('OpenCode model ID').fill('my-private-model');
-  await expect(options.getByLabel('OpenCode model ID')).toHaveValue('my-private-model');
+  await options.getByLabel('OpenCode Model ID').fill('my-private-model');
+  await expect(options.getByLabel('OpenCode Model ID')).toHaveValue('my-private-model');
 });
 
 test('design system: extract from the page, guide generation, import tokens, inject them and switch off', async ({ context, extensionId }) => {
@@ -337,14 +337,14 @@ test('design system: extract from the page, guide generation, import tokens, inj
   const tokens = JSON.stringify({ color: { $type: 'color', accent: { $value: '#10b981' } } });
   await panel.getByLabel('Token file').setInputFiles({ name: 'brand.tokens.json', mimeType: 'application/json', buffer: Buffer.from(tokens) });
   await expect(panel.getByRole('status')).toHaveText('Imported "brand" with 1 tokens.');
-  await expect(panel.getByLabel('Active design system')).toHaveValue(/.+/);
-  await expect(panel.getByLabel('Active design system').locator('option:checked')).toHaveText('brand');
+  await expect(panel.getByLabel('Active for this site')).toHaveValue(/.+/);
+  await expect(panel.getByLabel('Active for this site').locator('option:checked')).toHaveText('brand');
   await applyPrompt(panel, 'Add a token banner');
   const tokenBanner = app.locator('.hew-e2e-token');
   await expect(tokenBanner).toHaveCSS('background-color', 'rgb(16, 185, 129)');
 
   // Switching off removes the injected tokens; the page's own variables were never touched.
-  await panel.getByLabel('Active design system').selectOption('');
+  await panel.getByLabel('Active for this site').selectOption('');
   await expect(tokenBanner).toHaveCSS('background-color', 'rgb(1, 2, 3)');
   await expect(app.locator('style[data-hew-design-system]')).toHaveCount(0);
   expect(await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--brand').trim())).toBe('#4f46e5');
@@ -359,7 +359,7 @@ test('export: the applied changes download as Markdown, JSON and an OpenSpec arc
   await expect(app.locator('.hew-e2e-banner')).toHaveCount(1);
 
   const download = async (format: string) => {
-    await panel.getByLabel('Export format').selectOption(format);
+    await panel.getByLabel('Format', { exact: true }).selectOption(format);
     const [file] = await Promise.all([panel.waitForEvent('download'), panel.getByRole('button', { name: 'Download' }).click()]);
     return { name: file.suggestedFilename(), path: await file.path() };
   };
